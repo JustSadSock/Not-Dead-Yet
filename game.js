@@ -1,11 +1,11 @@
 // game.js
 
 // ========== КОНСТАНТЫ ==========
-const RENDER_W  = 30;    // ширина области в тайлах
-const RENDER_H  = 30;    // высота области в тайлах
-const TILE_SIZE = 100;   // пикселей на тайл
-const SPEED     = 3;     // тайлы в секунду
-const FOG_FADE  = 0.5;   // альфа/секунда для memoryAlpha
+const RENDER_W   = 30;    // ширина области в тайлах
+const RENDER_H   = 30;    // высота области в тайлах
+const TILE_SIZE  = 100;   // пикселей на тайл (приближение)
+const SPEED      = 3;     // тайлы в секунду
+const FOG_FADE   = 0.5;   // скорость тускнения (альфа/секунда)
 
 // ========== CANVAS ==========
 const canvas = document.getElementById('gameCanvas');
@@ -13,81 +13,49 @@ const ctx    = canvas.getContext('2d');
 canvas.width  = RENDER_W * TILE_SIZE;
 canvas.height = RENDER_H * TILE_SIZE;
 
-// ========== ИГРОВАЯ КАРТА ==========
-const gameMap = new GameMap(100, 100, RENDER_W, RENDER_H, TILE_SIZE);
-
-// ========== СПАУН ПЕРСОНАЖА ==========
-let spawnCandidates = [];
-// чанк [0,0] охватывает тайлы y:[0..RENDER_H-1], x:[0..RENDER_W-1]
-for (let y = 0; y < RENDER_H; y++) {
-  for (let x = 0; x < RENDER_W; x++) {
-    if (!gameMap.isWall(x, y)) {
-      spawnCandidates.push({ x, y });
-    }
-  }
-}
-// если ни одной «пола», то центр
-if (spawnCandidates.length === 0) {
-  spawnCandidates.push({ x: Math.floor(RENDER_W/2), y: Math.floor(RENDER_H/2) });
-}
-// выбираем случайную точку из списка
-const start = spawnCandidates[Math.floor(Math.random() * spawnCandidates.length)];
-
-// ========== ПЕРСОНАЖ ==========
-const player = {
-  x: start.x + 0.5,       // центр тайла
-  y: start.y + 0.5,
+// ========== ИГРОВЫЕ ОБЪЕКТЫ ==========
+const gameMap = new GameMap(300, 300, RENDER_W, RENDER_H, TILE_SIZE);
+const player  = {
+  x: RENDER_W / 2 + 0.5,   // старт в центре чанка [0,0]
+  y: RENDER_H / 2 + 0.5,
   directionAngle: 0
 };
-// чтобы controls.js мог менять направление
-window.player = player;
+window.player   = player;
+window.monsters = window.monsters || [];
 
-// ========== МОНСТРЫ ==========
-window.monsters = []; // если ещё не инициализировано
-
-// ========== ДЕЛТА-ТАЙМ ==========
+// ========== ДЕЛТА-ВРЕМЯ ==========
 let lastTime = performance.now();
 
+// ========== ИГРОВОЙ ЦИКЛ ==========
 function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // --- 1) Ввод и поворот ---
+  // --- 1) СНЯТИЕ ВВОДА И ПОВОРОТ ---
   const iv = window.inputVector || { x: 0, y: 0 };
   if (iv.x !== 0 || iv.y !== 0) {
     player.directionAngle = Math.atan2(iv.y, iv.x);
   }
 
-  // --- 2) Плавное движение + коллизии ---
-  let nx = player.x + iv.x * SPEED * dt;
-  let ny = player.y + iv.y * SPEED * dt;
-  if (!gameMap.isWall(Math.floor(nx), Math.floor(player.y))) {
+  // --- 2) ПЛАВНОЕ ДВИЖЕНИЕ С ЖЁСТКОЙ КОЛЛИЗИЕЙ ---
+  const nx = player.x + iv.x * SPEED * dt;
+  const ny = player.y + iv.y * SPEED * dt;
+  // шагаем только если оба тайла свободны
+  if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
     player.x = nx;
-  }
-  if (!gameMap.isWall(Math.floor(player.x), Math.floor(ny))) {
     player.y = ny;
   }
 
-  // --- 3) Поле зрения ---
+  // --- 3) РАСЧЁТ ПОЛЯ ЗРЕНИЯ ---
   const visible = computeFOV(gameMap, {
     x: player.x,
     y: player.y,
     directionAngle: player.directionAngle
   });
 
-  // --- 4) Границы рендера ---
-  const camX   = player.x - RENDER_W/2;
-  const camY   = player.y - RENDER_H/2;
-  const startX = Math.floor(camX);
-  const startY = Math.floor(camY);
-  const endX   = Math.ceil(camX + RENDER_W);
-  const endY   = Math.ceil(camY + RENDER_H);
-
-  // --- 5) Обновление памяти + регенерация ---
-  for (let y = startY; y < endY; y++) {
-    if (y < 0 || y >= gameMap.rows) continue;
-    for (let x = startX; x < endX; x++) {
-      if (x < 0 || x >= gameMap.cols) continue;
+  // --- 4) ОБНОВЛЕНИЕ memoryAlpha & РЕГЕНЕРАЦИЯ ВСЕХ ТАЙЛОВ ---
+  for (let y = 0; y < gameMap.rows; y++) {
+    for (let x = 0; x < gameMap.cols; x++) {
       const tile = gameMap.tiles[y][x];
       const key  = `${x},${y}`;
       if (visible.has(key)) {
@@ -101,19 +69,29 @@ function gameLoop(now = performance.now()) {
     }
   }
 
-  // --- 6) Обновление монстров ---
+  // --- 5) ОБНОВЛЕНИЕ И ОЧИСТКА МОНСТРОВ ---
   window.monsters.forEach(m => m.update(dt, visible));
   window.monsters = window.monsters.filter(m => !m.dead);
 
-  // --- 7) Отрисовка ---
+  // --- 6) ОТРИСОВКА ---
+  // смещение камеры так, чтобы игрок был в центре
+  const camX = player.x - RENDER_W / 2;
+  const camY = player.y - RENDER_H / 2;
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
   ctx.translate(-camX * TILE_SIZE, -camY * TILE_SIZE);
 
-  // отрисовываем тайлы
+  // отрисовка тайлов только в видимой области
+  const startX = Math.floor(camX);
+  const startY = Math.floor(camY);
+  const endX   = Math.ceil(camX + RENDER_W);
+  const endY   = Math.ceil(camY + RENDER_H);
+
   for (let y = startY; y < endY; y++) {
+    if (y < 0 || y >= gameMap.rows) continue;
     for (let x = startX; x < endX; x++) {
-      if (x < 0 || y < 0 || x >= gameMap.cols || y >= gameMap.rows) continue;
+      if (x < 0 || x >= gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
       ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
@@ -122,10 +100,10 @@ function gameLoop(now = performance.now()) {
   }
   ctx.globalAlpha = 1;
 
-  // отрисовываем монстров
+  // отрисовка монстров (draw(ctx) использует абсолютные координаты)
   window.monsters.forEach(m => m.draw(ctx));
 
-  // отрисовываем игрока
+  // отрисовка игрока в центре экрана
   const px = (player.x + 0.5) * TILE_SIZE;
   const py = (player.y + 0.5) * TILE_SIZE;
   ctx.fillStyle = 'red';
