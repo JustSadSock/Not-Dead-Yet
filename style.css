@@ -1,31 +1,28 @@
-/* Сброс отступов, чёрный фон */
+/* style.css */
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
   overflow: hidden;
-  background: #000;
 }
-
-/* Canvas: квадратный viewport 30×30 тайлов */
+#gameContainer {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: black;
+}
+/* внутреннее разрешение всё ещё RENDER_W×RENDER_H тайлов */
 #gameCanvas {
-  touch-action: none;
-  background: #000;
-  /* CSS-размер: 100vw×100vw, чтобы всегда было квадратным */
-  width: 100vw;
-  height: 100vw;
-  display: block;
-}
-
-/* Джойстик остаётся под картой */
-#joystickContainer {
   position: absolute;
-  bottom: 0;
+  top: 0;
   left: 0;
-  width: 100vw;
-  height: calc(100vh - 100vw); /* остальное под джойстик */
-  pointer-events: none;
+  /* масштабируем под ширину экрана */
+  width: 100%;
+  /* сохраняем соотношение сторон RENDER_H/RENDER_W */
+  height: calc(100vw * (RENDER_H / RENDER_W));
+  max-height: 100%; /* не выйдет за высоту экрана */
 }
+/* джойстик по-прежнему внизу, отцентрирован */
 #joystickBase {
   position: absolute;
   bottom: 20px;
@@ -33,19 +30,14 @@ html, body {
   width: 80px;
   height: 80px;
   margin-left: -40px;
-  background: rgba(255,255,255,0.15);
   border-radius: 50%;
-  pointer-events: all;
-  touch-action: none;
+  background: rgba(0,0,0,0.5);
 }
 #joystickKnob {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 40px;
-  height: 40px;
+  top: 50%; left: 50%;
+  width: 40px; height: 40px;
   margin: -20px 0 0 -20px;
-  background: rgba(255,255,255,0.6);
   border-radius: 50%;
-  pointer-events: none;
+  background: rgba(255,255,255,0.5);
 }
