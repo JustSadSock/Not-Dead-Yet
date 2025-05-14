@@ -1,73 +1,78 @@
 // controls.js
 
-// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
-window.inputVector = { x: 0, y: 0 };
+// ===================
+// GLOBAL INPUT STATE
+// ===================
+window.inputVector = { x: 0, y: 0 };  // from touch joystick
+window.keyVector   = { x: 0, y: 0 };  // from keyboard WASD/arrows
 
-// Находим элементы joystickBase и joystickKnob
+// ===================
+// KEYBOARD HANDLING
+// ===================
+window.addEventListener('keydown', e => {
+  switch (e.key) {
+    case 'ArrowUp':    case 'w': window.keyVector.y = -1; break;
+    case 'ArrowDown':  case 's': window.keyVector.y = +1; break;
+    case 'ArrowLeft':  case 'a': window.keyVector.x = -1; break;
+    case 'ArrowRight': case 'd': window.keyVector.x = +1; break;
+  }
+});
+window.addEventListener('keyup', e => {
+  switch (e.key) {
+    case 'ArrowUp':    case 'w': window.keyVector.y = 0; break;
+    case 'ArrowDown':  case 's': window.keyVector.y = 0; break;
+    case 'ArrowLeft':  case 'a': window.keyVector.x = 0; break;
+    case 'ArrowRight': case 'd': window.keyVector.x = 0; break;
+  }
+});
+
+// ===================
+// TOUCH JOYSTICK
+// ===================
 const base = document.getElementById('joystickBase');
 const knob = document.getElementById('joystickKnob');
-
-// Флаг, что мы водим пальцем по джойстику
 let dragging = false;
-// Точка начала касания
-let origin = { x: 0, y: 0 };
-// Радиус, на который можно сместить ручку (в пикселях)
-const maxRadius = 40;
+let origin   = { x: 0, y: 0 };
+const maxRadius = 40;  // in pixels
 
-/**
- * pointerdown — начинаем «таскать» джойстик
- */
 base.addEventListener('pointerdown', e => {
   dragging = true;
-  // позиция, относительно которой будут вычисляться смещения
   origin = { x: e.clientX, y: e.clientY };
   base.setPointerCapture(e.pointerId);
 });
 
-/**
- * pointermove — если тянем, пересчитываем вектор и двигаем «ручку»
- */
 base.addEventListener('pointermove', e => {
   if (!dragging) return;
 
-  // вектор от центра до касания
   const dx = e.clientX - origin.x;
   const dy = e.clientY - origin.y;
   const dist = Math.hypot(dx, dy);
-
-  // угол направления
   const angle = Math.atan2(dy, dx);
 
-  // ограничиваем смещение по радиусу
   const limited = Math.min(dist, maxRadius);
   const nx = Math.cos(angle) * limited;
   const ny = Math.sin(angle) * limited;
 
-  // двигаем ручку джойстика
+  // move knob
   knob.style.transform = `translate(${nx}px, ${ny}px)`;
 
-  // нормируем вектор ввода в диапазон [-1…1]
+  // update inputVector in [-1..1]
   window.inputVector.x = nx / maxRadius;
   window.inputVector.y = ny / maxRadius;
 
-  // и сразу обновляем направление взгляда персонажа
+  // also rotate player immediately if exists
   if (window.player) {
     window.player.directionAngle = angle;
   }
 });
 
-/**
- * pointerup/pointercancel — сбрасываем джойстик в центр
- */
 function endDrag(e) {
   dragging = false;
-  // возвращаем «ручку» в центр
   knob.style.transform = 'translate(0, 0)';
-  // сбрасываем вектор ввода
   window.inputVector.x = 0;
   window.inputVector.y = 0;
   base.releasePointerCapture(e.pointerId);
 }
 
-base.addEventListener('pointerup',   endDrag);
+base.addEventListener('pointerup',     endDrag);
 base.addEventListener('pointercancel', endDrag);
