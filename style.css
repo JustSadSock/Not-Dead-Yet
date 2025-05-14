@@ -1,45 +1,41 @@
 /* style.css */
 
-/* 1) Полностью убираем прокрутку и белые рамки */
+/* 1) Убираем прокрутку и белые рамки */
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  overscroll-behavior: none;
+  overscroll-behavior: none;  /* отключаем «прыжки» на мобильных */
   background: #000;
 }
 
-/* 2) Контейнер игры */
+/* 2) Контейнер под игру */
 #gameContainer {
   position: relative;
   width: 100vw;
   height: 100vh;
-  background: #000;
-  display: flex;
-  justify-content: center;
-  align-items: center;
   overflow: hidden;
-}
-
-/* 3) Canvas: всегда максимально возможный квадрат */
-#gameCanvas {
-  display: block;
-  aspect-ratio: 1 / 1;
-  width: auto;
-  height: auto;
-  max-width: 100vw;
-  max-height: 100vh;
   background: #000;
-  touch-action: none;
-  /* никаких transform-scale! пусть браузер ровно укладывает квадрат */
 }
 
-/* 4) Джойстик: поднят выше, чтобы не перекрывался ни адресной строкой, ни головой */
+/* 3) Канвас: подгоняем под весь контейнер пиксельно */
+#gameCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;    /* растягиваем до границ контейнера */
+  height: 100%;   /* аналогично по высоте */
+  display: block;
+  touch-action: none; /* отключаем скролл при касании канваса */
+  image-rendering: crisp-edges; /* сохраняем чёткие пиксели */
+}
+
+/* 4) Джойстик: чуть выше, с учётом «safe area» */
 #joystickBase {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 20px) + 100px);
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 80px);
   left: 50%;
   transform: translateX(-50%);
   width: 80px;
@@ -59,4 +55,11 @@ html, body {
   background: rgba(255,255,255,0.6);
   border-radius: 50%;
   pointer-events: none;
+}
+
+/* 5) По желанию — скрываем кастомный курсор на ПК */
+@media (pointer: fine) {
+  #gameCanvas {
+    cursor: none;
+  }
 }
