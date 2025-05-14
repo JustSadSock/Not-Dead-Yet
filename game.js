@@ -13,7 +13,6 @@ let RENDER_W, RENDER_H;
 function updateViewport() {
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
-  // сколько целых тайлов помещается по ширине/высоте
   RENDER_W = Math.floor(canvas.width  / TILE_SIZE);
   RENDER_H = Math.floor(canvas.height / TILE_SIZE);
 }
@@ -21,8 +20,8 @@ window.addEventListener('resize', updateViewport);
 updateViewport();
 
 // ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };  // сенсорный джойстик
-window.keyVector   = { x: 0, y: 0 };  // WASD / стрелки
+window.inputVector = { x: 0, y: 0 };
+window.keyVector   = { x: 0, y: 0 };
 
 window.addEventListener('keydown', e => {
   switch (e.key) {
@@ -45,7 +44,7 @@ window.addEventListener('keyup', e => {
 function computeFOV(map, player) {
   const visible  = new Set();
   const maxR     = 10;
-  const fullFOV  = Math.PI / 3;  // 60°
+  const fullFOV  = Math.PI / 3;
   const halfFOV  = fullFOV / 2;
   const rays     = 64;
 
@@ -59,7 +58,6 @@ function computeFOV(map, player) {
       const fy = player.y + dy * dist;
       const ix = Math.floor(fx), iy = Math.floor(fy);
 
-      // генерируем чанк, если нужно
       map.ensureChunk(
         Math.floor(ix / map.chunkW),
         Math.floor(iy / map.chunkH)
@@ -117,19 +115,11 @@ class Monster {
 }
 
 // ========== MAP & PLAYER SPAWN ==========
-window.gameMap = new GameMap(
-  300,           // cols
-  300,           // rows
-  30,            // chunkW
-  30,            // chunkH
-  TILE_SIZE
-);
+window.gameMap = new GameMap(300, 300, 30, 30, TILE_SIZE);
 const gameMap = window.gameMap;
 
-// стартовый чанк
 gameMap.ensureChunk(0, 0);
 
-// собрать полы для спавна
 const spawnList = [];
 for (let y = 0; y < gameMap.chunkH; y++) {
   for (let x = 0; x < gameMap.chunkW; x++) {
@@ -142,17 +132,12 @@ const start = spawnList.length
   ? spawnList[Math.floor(Math.random() * spawnList.length)]
   : { x: Math.floor(gameMap.chunkW/2), y: Math.floor(gameMap.chunkH/2) };
 
-window.player = {
-  x: start.x + 0.5,
-  y: start.y + 0.5,
-  directionAngle: 0
-};
+window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
 const player = window.player;
 
 // ========== MONSTER SPAWN ==========
 window.monsters = [];
 const monsters = window.monsters;
-
 setInterval(() => {
   const vis = computeFOV(gameMap, player);
   let x, y, key;
@@ -171,14 +156,12 @@ function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) INPUT & DIRECTION
+  // 1) INPUT & ROTATION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
-  if (iv.x || iv.y) {
-    player.directionAngle = Math.atan2(iv.y, iv.x);
-  }
+  if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
 
   // 2) MOVE & COLLISION
   const nx = player.x + iv.x * SPEED * dt;
@@ -191,13 +174,12 @@ function gameLoop(now = performance.now()) {
   // 3) COMPUTE FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) MEMORY FADE, VISITED EXPANSION & CHUNKS TO REGEN
+  // 4) MEMORY FADE, VISITED & CHUNKS COLLECTION
   const chunksToRegen = new Set();
 
   for (const chunkKey of gameMap.generatedChunks) {
     const [cx, cy] = chunkKey.split(',').map(Number);
-    const x0 = cx * gameMap.chunkW;
-    const y0 = cy * gameMap.chunkH;
+    const x0 = cx * gameMap.chunkW, y0 = cy * gameMap.chunkH;
 
     for (let yy = 0; yy < gameMap.chunkH; yy++) {
       for (let xx = 0; xx < gameMap.chunkW; xx++) {
@@ -208,14 +190,11 @@ function gameLoop(now = performance.now()) {
         const key  = `${gx},${gy}`;
 
         if (visible.has(key)) {
-          // mark neighbors as visited
+          // expand visited to neighbors
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               const nx = gx + dx, ny = gy + dy;
-              if (
-                ny >= 0 && ny < gameMap.rows &&
-                nx >= 0 && nx < gameMap.cols
-              ) {
+              if (ny >= 0 && ny < gameMap.rows && nx >= 0 && nx < gameMap.cols) {
                 gameMap.tiles[ny][nx].visited = true;
               }
             }
@@ -224,8 +203,8 @@ function gameLoop(now = performance.now()) {
         } else if (tile.memoryAlpha > 0) {
           tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
           if (tile.memoryAlpha === 0 && tile.visited) {
-            const rcx = Math.floor(gx / gameMap.chunkW),
-                  rcy = Math.floor(gy / gameMap.chunkH);
+            const rcx = Math.floor(gx / gameMap.chunkW);
+            const rcy = Math.floor(gy / gameMap.chunkH);
             chunksToRegen.add(`${rcx},${rcy}`);
           }
         }
@@ -258,19 +237,15 @@ function gameLoop(now = performance.now()) {
   }
 
   // 8) RENDER
-  const camX = player.x - RENDER_W/2;
-  const camY = player.y - RENDER_H/2;
-  const startX = Math.floor(camX), startY = Math.floor(camY);
-  const endX   = Math.ceil(camX + RENDER_W), endY = Math.ceil(camY + RENDER_H);
-
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  ctx.translate(-camX * TILE_SIZE, -camY * TILE_SIZE);
+  ctx.translate(- (player.x - RENDER_W/2) * TILE_SIZE,
+                - (player.y - RENDER_H/2) * TILE_SIZE);
 
   // draw tiles
-  for (let y = startY; y < endY; y++) {
+  for (let y = Math.floor(player.y - RENDER_H/2); y < Math.ceil(player.y + RENDER_H/2); y++) {
     if (y < 0 || y >= gameMap.rows) continue;
-    for (let x = startX; x < endX; x++) {
+    for (let x = Math.floor(player.x - RENDER_W/2); x < Math.ceil(player.x + RENDER_W/2); x++) {
       if (x < 0 || x >= gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
