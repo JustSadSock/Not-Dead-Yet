@@ -1,9 +1,10 @@
 // game.js
 
 // ========== CONSTANTS ==========
-const TILE_SIZE = 27;    // размер тайла в пикселях
-const SPEED     = 3;     // тайлов в секунду
-const FOG_FADE  = 0.5;   // альфа/секунда для «памяти»
+const TILE_SIZE      = 27;    // размер тайла в пикселях
+const SPEED          = 3;     // тайлов в секунду
+const FOG_FADE       = 0.5;   // альфа/секунда для «памяти»
+const REGEN_INTERVAL = 1.0;   // секунд между запусками перегенерации
 
 // ========== CANVAS & VIEWPORT ==========
 const canvas = document.getElementById('gameCanvas');
@@ -42,16 +43,16 @@ window.addEventListener('keyup', e => {
 
 // ========== FOV (ray-casting) ==========
 function computeFOV(map, player) {
-  const visible  = new Set();
-  const maxR     = 10;
-  const fullFOV  = Math.PI / 3;
-  const halfFOV  = fullFOV / 2;
-  const rays     = 64;
+  const visible = new Set();
+  const maxR    = 10;
+  const fullFOV = Math.PI / 3;  // 60°
+  const halfFOV = fullFOV / 2;
+  const rays    = 64;
 
   for (let i = 0; i <= rays; i++) {
     const angle = player.directionAngle - halfFOV + (i / rays) * fullFOV;
-    const dx = Math.cos(angle), dy = Math.sin(angle);
-    let dist = 0;
+    const dx    = Math.cos(angle), dy = Math.sin(angle);
+    let dist    = 0;
 
     while (dist < maxR) {
       const fx = player.x + dx * dist;
@@ -69,6 +70,7 @@ function computeFOV(map, player) {
       dist += 0.2;
     }
   }
+
   return visible;
 }
 
@@ -130,7 +132,7 @@ for (let y = 0; y < gameMap.chunkH; y++) {
 }
 const start = spawnList.length
   ? spawnList[Math.floor(Math.random() * spawnList.length)]
-  : { x: Math.floor(gameMap.chunkW/2), y: Math.floor(gameMap.chunkH/2) };
+  : { x: Math.floor(gameMap.chunkW / 2), y: Math.floor(gameMap.chunkH / 2) };
 
 window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
 const player = window.player;
@@ -150,18 +152,23 @@ setInterval(() => {
 }, 2000);
 
 // ========== GAME LOOP ==========
-let lastTime = performance.now();
+let lastTime   = performance.now();
+let regenTimer = 0;
+const chunksToRegen = new Set();
 
 function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
+  regenTimer += dt;
 
-  // 1) INPUT & DIRECTION
+  // 1) INPUT & ROTATION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
-  if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
+  if (iv.x || iv.y) {
+    player.directionAngle = Math.atan2(iv.y, iv.x);
+  }
 
   // 2) MOVE & COLLISION
   const nx = player.x + iv.x * SPEED * dt;
@@ -174,10 +181,8 @@ function gameLoop(now = performance.now()) {
   // 3) COMPUTE FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) MEMORY FADE, VISITED & CHUNKS COLLECTION
-  const chunksToRegen = new Set();
-
-  for (const chunkKey of gameMap.generatedChunks) {
+  // 4) MEMORY FADE & CHUNKS COLLECTION
+  gameMap.generatedChunks.forEach(chunkKey => {
     const [cx, cy] = chunkKey.split(',').map(Number);
     const x0 = cx * gameMap.chunkW, y0 = cy * gameMap.chunkH;
 
@@ -194,10 +199,7 @@ function gameLoop(now = performance.now()) {
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               const nx = gx + dx, ny = gy + dy;
-              if (
-                ny >= 0 && ny < gameMap.rows &&
-                nx >= 0 && nx < gameMap.cols
-              ) {
+              if (ny >= 0 && ny < gameMap.rows && nx >= 0 && nx < gameMap.cols) {
                 gameMap.tiles[ny][nx].visited = true;
               }
             }
@@ -206,7 +208,7 @@ function gameLoop(now = performance.now()) {
         } else if (tile.memoryAlpha > 0) {
           tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
           if (tile.memoryAlpha === 0) {
-            // collect chunk whenever a tile fully fades
+            // добавляем чанк к перегенерации при полном затемнении тайла
             const rcx = Math.floor(gx / gameMap.chunkW);
             const rcy = Math.floor(gy / gameMap.chunkH);
             chunksToRegen.add(`${rcx},${rcy}`);
@@ -214,20 +216,26 @@ function gameLoop(now = performance.now()) {
         }
       }
     }
-  }
+  });
 
-  // 5) ONCE-PER-CHUNK REGENERATION (all faded tiles)
-  gameMap.regenerateChunksPreserveFOV(chunksToRegen, computeFOV, player);
+  // 5) THROTTLED PER-CHUNK REGENERATION
+  if (regenTimer >= REGEN_INTERVAL) {
+    regenTimer -= REGEN_INTERVAL;
+    if (chunksToRegen.size > 0) {
+      gameMap.regenerateChunksPreserveFOV(chunksToRegen, computeFOV, player);
+      chunksToRegen.clear();
+    }
+  }
 
   // 6) UPDATE & CLEAN MONSTERS
   monsters.forEach(m => m.update(dt, visible));
   window.monsters = monsters.filter(m => !m.dead);
 
   // 7) ENSURE VISIBLE CHUNKS
-  const camLeft   = player.x - RENDER_W/2;
-  const camTop    = player.y - RENDER_H/2;
-  const camRight  = player.x + RENDER_W/2;
-  const camBottom = player.y + RENDER_H/2;
+  const camLeft   = player.x - RENDER_W / 2;
+  const camTop    = player.y - RENDER_H / 2;
+  const camRight  = player.x + RENDER_W / 2;
+  const camBottom = player.y + RENDER_H / 2;
 
   const minCX = Math.floor(camLeft  / gameMap.chunkW);
   const maxCX = Math.floor((camRight - 1) / gameMap.chunkW);
@@ -243,13 +251,22 @@ function gameLoop(now = performance.now()) {
   // 8) RENDER
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  ctx.translate(- (player.x - RENDER_W/2) * TILE_SIZE,
-                - (player.y - RENDER_H/2) * TILE_SIZE);
+  ctx.translate(
+    - (player.x - RENDER_W/2) * TILE_SIZE,
+    - (player.y - RENDER_H/2) * TILE_SIZE
+  );
 
-  // draw tiles
-  for (let y = Math.floor(player.y - RENDER_H/2); y < Math.ceil(player.y + RENDER_H/2); y++) {
+  for (
+    let y = Math.floor(player.y - RENDER_H/2);
+    y < Math.ceil(player.y + RENDER_H/2);
+    y++
+  ) {
     if (y < 0 || y >= gameMap.rows) continue;
-    for (let x = Math.floor(player.x - RENDER_W/2); x < Math.ceil(player.x + RENDER_W/2); x++) {
+    for (
+      let x = Math.floor(player.x - RENDER_W/2);
+      x < Math.ceil(player.x + RENDER_W/2);
+      x++
+    ) {
       if (x < 0 || x >= gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
@@ -259,10 +276,8 @@ function gameLoop(now = performance.now()) {
   }
   ctx.globalAlpha = 1;
 
-  // draw monsters
   monsters.forEach(m => m.draw(ctx));
 
-  // draw player
   const px = (player.x + 0.5) * TILE_SIZE;
   const py = (player.y + 0.5) * TILE_SIZE;
   ctx.fillStyle = 'red';
