@@ -3,8 +3,8 @@
 class GameMap {
   /**
    * cols×rows — общий размер “бесконечного” мира,
-   * renderW×renderH — размер квадратной области вокруг игрока (30×30),
-   * tileSize — пикселей на тайл (не используется при логике, но хранится для справки).
+   * renderW×renderH — размер области вокруг игрока (30×30),
+   * tileSize — пикселей на тайл (для справки).
    */
   constructor(
     cols     = 100,
@@ -19,17 +19,29 @@ class GameMap {
     this.renderH  = renderH;
     this.tileSize = tileSize;
 
+    // Основной массив тайлов
     // tiles[y][x] = { type: 'wall'|'floor', memoryAlpha: 0…1 }
     this.tiles = [];
-    // список комнат для генерации коридоров
+    // После первичной генерации сюда скопируем только типы
+    this._original = [];
+
+    // Для layout
     this.rooms = [];
 
     this._generateLayout();
+
+    // Клонируем начальную структуру в _original
+    for (let y = 0; y < this.rows; y++) {
+      this._original[y] = [];
+      for (let x = 0; x < this.cols; x++) {
+        this._original[y][x] = this.tiles[y][x].type;
+      }
+    }
   }
 
   /** Первичная генерация: заливаем стенами, создаём комнаты и коридоры */
   _generateLayout() {
-    // 1) Заливаем всё стенами
+    // 1) Заливаем все стены
     for (let y = 0; y < this.rows; y++) {
       this.tiles[y] = [];
       for (let x = 0; x < this.cols; x++) {
@@ -37,33 +49,33 @@ class GameMap {
       }
     }
 
-    // 2) Создаём случайные комнаты
+    // 2) Создаём несколько комнат
     const roomCount = 8;
     const roomMin   = 8;
     const roomMax   = 16;
     for (let i = 0; i < roomCount; i++) {
-      const w = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
-      const h = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
-      const x = 1 + Math.floor(Math.random() * (this.cols - w - 2));
-      const y = 1 + Math.floor(Math.random() * (this.rows - h - 2));
-      const cx = x + Math.floor(w / 2);
-      const cy = y + Math.floor(h / 2);
-      this.rooms.push({ x, y, w, h, cx, cy });
+      const w  = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
+      const h  = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
+      const x0 = 1 + Math.floor(Math.random() * (this.cols - w - 2));
+      const y0 = 1 + Math.floor(Math.random() * (this.rows - h - 2));
+      const cx = x0 + Math.floor(w / 2);
+      const cy = y0 + Math.floor(h / 2);
+      this.rooms.push({ x:x0, y:y0, w, h, cx, cy });
 
-      // очищаем пол в комнате
-      for (let yy = y; yy < y + h; yy++) {
-        for (let xx = x; xx < x + w; xx++) {
+      // Чистим пол в комнате
+      for (let yy = y0; yy < y0 + h; yy++) {
+        for (let xx = x0; xx < x0 + w; xx++) {
           this.tiles[yy][xx].type = 'floor';
         }
       }
     }
 
-    // 3) Соединяем комнаты коридорами шириной 2 клетки
+    // 3) Соединяем комнаты широкими коридорами
     for (let i = 1; i < this.rooms.length; i++) {
       const prev = this.rooms[i - 1];
       const cur  = this.rooms[i];
 
-      // Горизонтальный проход
+      // Горизонтальный проход (2 тайла высоты)
       const x1 = Math.min(prev.cx, cur.cx);
       const x2 = Math.max(prev.cx, cur.cx);
       for (let xx = x1; xx <= x2; xx++) {
@@ -75,7 +87,7 @@ class GameMap {
         }
       }
 
-      // Вертикальный проход
+      // Вертикальный проход (2 тайла ширины)
       const y1 = Math.min(prev.cy, cur.cy);
       const y2 = Math.max(prev.cy, cur.cy);
       for (let yy = y1; yy <= y2; yy++) {
@@ -89,23 +101,26 @@ class GameMap {
     }
   }
 
-  /** Проверяет, внутри ли координаты 0 ≤ x < cols и 0 ≤ y < rows */
+  /** Проверяет, что (x,y) в пределах массива */
   _inBounds(x, y) {
     return x >= 0 && y >= 0 && x < this.cols && y < this.rows;
   }
 
-  /** Истина, если в (x,y) стена или точка вне карты */
+  /**
+   * Истинно, если на (x,y) стена или точка вне карты
+   */
   isWall(x, y) {
     if (!this._inBounds(x, y)) return true;
     return this.tiles[y][x].type === 'wall';
   }
 
   /**
-   * Перегенерирует «забытый» тайл случайным образом
-   * 40% — стена, 60% — пол, сбрасывает memoryAlpha.
+   * Перегенерирует «забытый» тайл, возвращая его
+   * к изначальному типу из первичной генерации.
+   * Сбрасывает memoryAlpha.
    */
   regenerateTile(x, y) {
-    const type = Math.random() < 0.4 ? 'wall' : 'floor';
-    this.tiles[y][x] = { type, memoryAlpha: 0 };
+    const orig = this._original[y]?.[x] || 'floor';
+    this.tiles[y][x] = { type: orig, memoryAlpha: 0 };
   }
 }
