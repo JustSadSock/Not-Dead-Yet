@@ -156,7 +156,7 @@ function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) INPUT & ROTATION
+  // 1) INPUT & DIRECTION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
@@ -194,7 +194,10 @@ function gameLoop(now = performance.now()) {
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               const nx = gx + dx, ny = gy + dy;
-              if (ny >= 0 && ny < gameMap.rows && nx >= 0 && nx < gameMap.cols) {
+              if (
+                ny >= 0 && ny < gameMap.rows &&
+                nx >= 0 && nx < gameMap.cols
+              ) {
                 gameMap.tiles[ny][nx].visited = true;
               }
             }
@@ -202,7 +205,8 @@ function gameLoop(now = performance.now()) {
           tile.memoryAlpha = 1;
         } else if (tile.memoryAlpha > 0) {
           tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
-          if (tile.memoryAlpha === 0 && tile.visited) {
+          if (tile.memoryAlpha === 0) {
+            // collect chunk whenever a tile fully fades
             const rcx = Math.floor(gx / gameMap.chunkW);
             const rcy = Math.floor(gy / gameMap.chunkH);
             chunksToRegen.add(`${rcx},${rcy}`);
@@ -212,7 +216,7 @@ function gameLoop(now = performance.now()) {
     }
   }
 
-  // 5) ONCE-PER-CHUNK REGENERATION
+  // 5) ONCE-PER-CHUNK REGENERATION (all faded tiles)
   gameMap.regenerateChunksPreserveFOV(chunksToRegen, computeFOV, player);
 
   // 6) UPDATE & CLEAN MONSTERS
