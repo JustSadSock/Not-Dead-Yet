@@ -1,31 +1,45 @@
 /* style.css */
 
-/* 1) Канвас: увеличиваем масштаб карты до 150% */
+/* 1) Полностью убираем скролл и белые поля */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;              /* больше не скроллится */
+  overscroll-behavior: none;     /* отключаем bounce на мобильниках */
+  background: #000;              /* чёрный фон вокруг */
+}
+
+/* 2) Контейнер под игру */
 #gameContainer {
   position: relative;
   width: 100vw;
   height: 100vh;
-  background: #000;
   overflow: hidden;
+  background: #000;
   display: flex;
   justify-content: center;
   align-items: center;
 }
+
+/* 3) Canvas: масштабируем карту на 150%, сохраняем соотношение сторон 1:1 */
 #gameCanvas {
-  /* делим ширину на 1.5, чтобы после масштабирования занять всю ширину */
-  width: calc(100% / 1.5);
-  height: auto;
-  max-height: 100%;
-  /* масштабируем на 150% */
-  transform: scale(1.5);
-  transform-origin: center center;
-  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;                   /* займёт всю ширину контейнера */
+  height: auto;                  /* высота подстроится при scale */
+  transform: scale(1.5);         /* масштаб 150% */
+  transform-origin: top left;    /* точка привязки для масштабирования */
+  background: #000;              /* фон чёрный, чтобы не было белых краёв */
+  touch-action: none;            /* отключаем дефолтный скролл на тачах */
 }
 
-/* 2) Джойстик: поднимаем ещё выше (80px от safe-area) */
+/* 4) Джойстик: опускаем его вниз на 60px от безопасной зоны */
 #joystickBase {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 20px) + 80px);
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 60px);
   left: 50%;
   transform: translateX(-50%);
   width: 80px;
