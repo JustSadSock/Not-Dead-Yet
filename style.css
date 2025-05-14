@@ -1,45 +1,45 @@
 /* style.css */
 
-/* 1) Полностью убираем скролл и белые поля */
+/* 1) Полностью убираем прокрутку и белые рамки */
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;              /* больше не скроллится */
-  overscroll-behavior: none;     /* отключаем bounce на мобильниках */
-  background: #000;              /* чёрный фон вокруг */
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #000;
 }
 
-/* 2) Контейнер под игру */
+/* 2) Контейнер игры */
 #gameContainer {
   position: relative;
   width: 100vw;
   height: 100vh;
-  overflow: hidden;
   background: #000;
   display: flex;
   justify-content: center;
   align-items: center;
+  overflow: hidden;
 }
 
-/* 3) Canvas: масштабируем карту на 150%, сохраняем соотношение сторон 1:1 */
+/* 3) Canvas: всегда максимально возможный квадрат */
 #gameCanvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;                   /* займёт всю ширину контейнера */
-  height: auto;                  /* высота подстроится при scale */
-  transform: scale(1.5);         /* масштаб 150% */
-  transform-origin: top left;    /* точка привязки для масштабирования */
-  background: #000;              /* фон чёрный, чтобы не было белых краёв */
-  touch-action: none;            /* отключаем дефолтный скролл на тачах */
+  display: block;
+  aspect-ratio: 1 / 1;
+  width: auto;
+  height: auto;
+  max-width: 100vw;
+  max-height: 100vh;
+  background: #000;
+  touch-action: none;
+  /* никаких transform-scale! пусть браузер ровно укладывает квадрат */
 }
 
-/* 4) Джойстик: опускаем его вниз на 60px от безопасной зоны */
+/* 4) Джойстик: поднят выше, чтобы не перекрывался ни адресной строкой, ни головой */
 #joystickBase {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 20px) + 60px);
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 100px);
   left: 50%;
   transform: translateX(-50%);
   width: 80px;
