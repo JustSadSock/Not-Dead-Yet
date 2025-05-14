@@ -1,9 +1,9 @@
 // game.js
 
 // ========== CONSTANTS ==========
-const TILE_SIZE  = 27;    // уменьшено в 1.5× от 40 (≈26.7 → 27px)
+const TILE_SIZE  = 27;    // фиксированный размер тайла в пикселях
 const SPEED      = 3;     // тайлов в секунду
-const FOG_FADE   = 0.5;   // альфа/секунда для “памяти”
+const FOG_FADE   = 0.5;   // альфа/секунда для «памяти»
 
 // ========== DYNAMIC VIEWPORT ==========
 let RENDER_W, RENDER_H;
@@ -11,15 +11,13 @@ const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
 function updateViewport() {
-  // подгоняем канвас под размер окна
+  // подгоняем размер канваса под окно
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
-
-  // сколько целых тайлов помещается по ширине и высоте
+  // вычисляем, сколько целых тайлов помещается
   RENDER_W = Math.floor(canvas.width  / TILE_SIZE);
   RENDER_H = Math.floor(canvas.height / TILE_SIZE);
-
-  // если карта уже создана, обновляем её размеры
+  // если карта уже создана — обновляем её параметры
   if (window.gameMap) {
     window.gameMap.renderW = RENDER_W;
     window.gameMap.renderH = RENDER_H;
@@ -29,7 +27,7 @@ window.addEventListener('resize', updateViewport);
 updateViewport();
 
 // ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };  // сенсорный джойстик
+window.inputVector = { x: 0, y: 0 };  // тач-джойстик
 window.keyVector   = { x: 0, y: 0 };  // клавиатура
 
 window.addEventListener('keydown', e => {
@@ -49,11 +47,11 @@ window.addEventListener('keyup', e => {
   }
 });
 
-// ========== FOV (ray-casting) ==========
+// ========== FOV (ray‐casting) ==========
 function computeFOV(map, player) {
   const visible  = new Set();
   const maxR     = 10;
-  const fullFOV  = Math.PI / 3;
+  const fullFOV  = Math.PI / 3; // 60°
   const halfFOV  = fullFOV / 2;
   const rays     = 64;
 
@@ -66,6 +64,7 @@ function computeFOV(map, player) {
       const fy = player.y + dy * dist;
       const ix = Math.floor(fx), iy = Math.floor(fy);
 
+      // генерируем нужный чанк
       map.ensureChunk(Math.floor(ix / RENDER_W), Math.floor(iy / RENDER_H));
       if (ix < 0 || iy < 0 || ix >= map.cols || iy >= map.rows) break;
 
@@ -86,6 +85,7 @@ class Monster {
     this.visibleTimer = 0;
     this.dead = false;
   }
+
   update(dt, visible) {
     const key = `${Math.floor(this.x)},${Math.floor(this.y)}`;
     const inView = visible.has(key);
@@ -93,6 +93,7 @@ class Monster {
     this.visibleTimer = inView ? this.visibleTimer + dt : 0;
     if (!this.real && this.timer > 5) this.dead = true;
   }
+
   draw(ctx) {
     const px = (this.x + 0.5) * TILE_SIZE;
     const py = (this.y + 0.5) * TILE_SIZE;
@@ -120,13 +121,13 @@ class Monster {
 window.gameMap = new GameMap(
   300,            // total cols
   300,            // total rows
-  RENDER_W,       // renderW tiles wide
-  RENDER_H,       // renderH tiles tall
+  RENDER_W,       // renderW tiles
+  RENDER_H,       // renderH tiles
   TILE_SIZE
 );
 const gameMap = window.gameMap;
 
-// initial chunk and spawn on floor
+// генерируем стартовый чанк и собираем «флору» для спавна
 gameMap.ensureChunk(0, 0);
 const spawnList = [];
 for (let y = 0; y < RENDER_H; y++) {
@@ -138,10 +139,14 @@ const start = spawnList.length
   ? spawnList[Math.floor(Math.random() * spawnList.length)]
   : { x: Math.floor(RENDER_W/2), y: Math.floor(RENDER_H/2) };
 
-window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
+window.player = {
+  x: start.x + 0.5,
+  y: start.y + 0.5,
+  directionAngle: 0
+};
 const player = window.player;
 
-// monsters list & spawn
+// спавним монстров
 window.monsters = [];
 const monsters = window.monsters;
 setInterval(() => {
@@ -155,52 +160,61 @@ setInterval(() => {
   monsters.push(new Monster(x, y, Math.random() < 0.3));
 }, 2000);
 
-// ========== MAIN LOOP ==========
+// ========== GAME LOOP ==========
 let lastTime = performance.now();
 function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) input & direction
+  // 1) INPUT & DIRECTION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
   if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
 
-  // 2) move & collision
+  // 2) MOVE & COLLISION
   const nx = player.x + iv.x * SPEED * dt;
   const ny = player.y + iv.y * SPEED * dt;
   if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
-    player.x = nx; player.y = ny;
+    player.x = nx;
+    player.y = ny;
   }
 
-  // 3) FOV
+  // 3) COMPUTE FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) memory & regen
+  // 4) MEMORY, VISITED & REGENERATION
   for (let key of gameMap.generatedChunks) {
     const [cx, cy] = key.split(',').map(Number);
     const x0 = cx * RENDER_W, y0 = cy * RENDER_H;
-    for (let y = y0; y < y0 + RENDER_H; y++) {
-      for (let x = x0; x < x0 + RENDER_W; x++) {
-        if (x<0||y<0||x>=gameMap.cols||y>=gameMap.rows) continue;
-        const tile = gameMap.tiles[y][x], k = `${x},${y}`;
+    for (let yy = 0; yy < RENDER_H; yy++) {
+      for (let xx = 0; xx < RENDER_W; xx++) {
+        const gx = x0 + xx, gy = y0 + yy;
+        if (gy < 0 || gy >= gameMap.rows || gx < 0 || gx >= gameMap.cols) continue;
+        const tile = gameMap.tiles[gy][gx];
+        const k    = `${gx},${gy}`;
+
         if (visible.has(k)) {
+          // пометка как «виделось» и полная яркость
           tile.memoryAlpha = 1;
+          tile.visited     = true;
         } else if (tile.memoryAlpha > 0) {
           tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
-          if (tile.memoryAlpha === 0) gameMap.regenerateTile(x, y);
+          if (tile.memoryAlpha === 0) {
+            // регенерируем только те тайлы, которые уже были seen
+            gameMap.regenerateTile(gx, gy);
+          }
         }
       }
     }
   }
 
-  // 5) update & clean monsters
+  // 5) UPDATE & CLEAN MONSTERS
   monsters.forEach(m => m.update(dt, visible));
   window.monsters = monsters.filter(m => !m.dead);
 
-  // 6) render
+  // 6) RENDER
   const camX = player.x - RENDER_W/2;
   const camY = player.y - RENDER_H/2;
   const startX = Math.floor(camX), startY = Math.floor(camY);
