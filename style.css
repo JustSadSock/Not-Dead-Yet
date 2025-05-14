@@ -1,0 +1,62 @@
+/* style.css */
+
+/* 1) Полностью убираем прокрутку и белые рамки */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #000;
+}
+
+/* 2) Контейнер игры */
+#gameContainer {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* 3) Canvas: всегда максимально возможный квадрат */
+#gameCanvas {
+  display: block;
+  aspect-ratio: 1 / 1;
+  width: auto;
+  height: auto;
+  max-width: 100vw;
+  max-height: 100vh;
+  background: #000;
+  touch-action: none;
+  /* никаких transform-scale! пусть браузер ровно укладывает квадрат */
+}
+
+/* 4) Джойстик: поднят выше, чтобы не перекрывался ни адресной строкой, ни головой */
+#joystickBase {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 100px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 80px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  touch-action: none;
+  pointer-events: all;
+}
+#joystickKnob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  background: rgba(255,255,255,0.6);
+  border-radius: 50%;
+  pointer-events: none;
+}
