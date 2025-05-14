@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Forgotten Roguelike</title>
+  <style>
+    body {margin:0;overflow:hidden;}
+    #gameCanvas {display:block; background:#000;}
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <!-- порядок важен: сначала структуры, потом логика -->
+  <script src="map.js"></script>
+  <script src="fov.js"></script>
+  <script src="game.js"></script>
+  <script src="controls.js"></script>
+</body>
+</html>
