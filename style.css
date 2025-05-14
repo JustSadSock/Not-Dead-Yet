@@ -1,0 +1,54 @@
+/* Сброс отступов и фоновая заливка */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+/* Канвас: весь экран за вычетом зоны джойстика */
+#gameCanvas {
+  display: block;
+  width: 100vw;
+  height: calc(100vh - 120px);
+  touch-action: none; /* чтобы свайпы не прокручивали страницу */
+  background: #000;
+}
+
+/* Контейнер для джойстика */
+#joystickContainer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: 120px;
+  pointer-events: none;
+}
+
+/* Внешний круг джойстика — по центру снизу */
+#joystickBase {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  width: 80px;
+  height: 80px;
+  margin-left: -40px; /* смещаем влево на половину ширины */
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  pointer-events: all;
+  touch-action: none;
+}
+
+/* “Ручка” джойстика — строго в центре базы */
+#joystickKnob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px; /* смещение на половину размеров */
+  background: rgba(255,255,255,0.6);
+  border-radius: 50%;
+  pointer-events: none;
+}
