@@ -18,11 +18,11 @@ class GameMap {
       Array.from({ length: cols }, () => ({ type: 'wall', memoryAlpha: 0 }))
     );
 
-    // 2) Для детерминированного рандома по чанкам
+    // 2) Для детерминированной генерации чанков
     this.worldSeed       = Math.floor(Math.random() * 0xFFFFFFFF);
-    this.chunkRegenCount = {};      // сколько раз регенерился каждый чанк
+    this.chunkRegenCount = {};  // счётчик регенераций для каждого чанка
 
-    // 3) Создаём функцию Mulberry32
+    // 3) Вспомогательная Mulberry32-функция
     this._mulberry32 = seed => {
       let t = seed >>> 0;
       return () => {
@@ -33,7 +33,7 @@ class GameMap {
       };
     };
 
-    // 4) Генерируем стартовый чанк (0,0)
+    // 4) Сразу генерируем стартовый чанк [0,0]
     this.generateChunk(0, 0);
   }
 
@@ -46,7 +46,7 @@ class GameMap {
     const count = (this.chunkRegenCount[key] || 0) + 1;
     this.chunkRegenCount[key] = count;
 
-    // Детерминированный seed для этого чанка
+    // Детерминированный сид для этого чанка
     const seed = this.worldSeed ^ (cx * 0x9249249) ^ (cy << 16) ^ count;
     const rng  = this._mulberry32(seed);
 
@@ -54,7 +54,7 @@ class GameMap {
     const x0 = cx * this.renderW;
     const y0 = cy * this.renderH;
 
-    // Сбрасываем все клетки в стену + memoryAlpha=0
+    // 1) Сбрасываем весь чанк в стены + memoryAlpha=0
     for (let y = y0; y < y0 + this.renderH; y++) {
       if (y < 0 || y >= this.rows) continue;
       for (let x = x0; x < x0 + this.renderW; x++) {
@@ -63,7 +63,7 @@ class GameMap {
       }
     }
 
-    // 1) 3–5 случайных комнат
+    // 2) Генерируем 3–5 случайных комнат
     const rooms = [];
     const roomCount = 3 + Math.floor(rng() * 3);
     for (let i = 0; i < roomCount; i++) {
@@ -73,7 +73,7 @@ class GameMap {
       const ry = y0 + Math.floor(rng() * (this.renderH - h));
       rooms.push({ rx, ry, w, h });
 
-      // Заливаем пол
+      // заливаем пол внутри комнаты
       for (let yy = ry; yy < ry + h; yy++) {
         for (let xx = rx; xx < rx + w; xx++) {
           if (yy >= 0 && yy < this.rows && xx >= 0 && xx < this.cols) {
@@ -83,13 +83,15 @@ class GameMap {
       }
     }
 
-    // 2) Соединяем комнаты 2-тайловыми коридорами
+    // 3) Соединяем комнаты 2-тайловыми коридорами
     for (let i = 1; i < rooms.length; i++) {
-      const A = rooms[i - 1], B = rooms[i];
-      const ax = Math.floor(A.rx + A.w / 2), ay = Math.floor(A.ry + A.h / 2);
-      const bx = Math.floor(B.rx + B.w / 2), by = Math.floor(B.ry + B.h / 2);
+      const A  = rooms[i - 1], B = rooms[i];
+      const ax = Math.floor(A.rx + A.w / 2),
+            ay = Math.floor(A.ry + A.h / 2);
+      const bx = Math.floor(B.rx + B.w / 2),
+            by = Math.floor(B.ry + B.h / 2);
 
-      // Горизонтальный ход
+      // горизонтальный сегмент
       for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) {
         for (let dy = 0; dy < 2; dy++) {
           const y = ay + dy;
@@ -98,7 +100,7 @@ class GameMap {
           }
         }
       }
-      // Вертикальный ход
+      // вертикальный сегмент
       for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) {
         for (let dx = 0; dx < 2; dx++) {
           const x = bx + dx;
@@ -110,27 +112,34 @@ class GameMap {
     }
   }
 
-  /** Коллизия: true, если (x,y) стена или вне карты */
+  /**
+   * true, если (x,y) стена или вне границ.
+   */
   isWall(x, y) {
     if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return true;
     return this.tiles[y][x].type === 'wall';
   }
 
   /**
-   * Когда герою «забывается» (memoryAlpha → 0) тайл (x,y),
-   * перегенерируем его чанк, но **не** тот, где сейчас игрок.
+   * Перегенерирует чанк забытого тайла (x,y),
+   * но **не** чанк, в котором сейчас стоит игрок:
+   * в нём просто сбросит memoryAlpha без смены типа.
    */
   regenerateTile(x, y) {
     const cx = Math.floor(x / this.renderW);
     const cy = Math.floor(y / this.renderH);
 
-    // Если игрок внутри этого же чанка — пропускаем
+    // если игрок в том же чанке — только сброс memoryAlpha
     if (window.player) {
       const pcx = Math.floor(window.player.x / this.renderW);
       const pcy = Math.floor(window.player.y / this.renderH);
-      if (pcx === cx && pcy === cy) return;
+      if (pcx === cx && pcy === cy) {
+        this.tiles[y][x].memoryAlpha = 0;
+        return;
+      }
     }
 
+    // иначе полностью перегенерируем чанк
     this.generateChunk(cx, cy);
   }
 }
