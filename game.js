@@ -1,292 +1,165 @@
-// game.js
+/**
+ * game.js – Основная логика игры: управление игроком, загрузка/выгрузка чанков, рендеринг.
+ */
 
-// ========== CONSTANTS ==========
-const TILE_SIZE      = 27;    // размер тайла в пикселях
-const SPEED          = 3;     // тайлов в секунду
-const FOG_FADE       = 0.5;   // альфа/секунда для «памяти»
-const REGEN_INTERVAL = 1.0;   // секунд между запусками перегенерации
+// Глобальные параметры
+const CHUNK_SIZE = 64;  // размер чанка должен совпадать с WIDTH, HEIGHT из map.js
+const renderDistance = 1;  // радиус чанков вокруг игрока, которые держим загруженными
 
-// ========== CANVAS & VIEWPORT ==========
-const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
-let RENDER_W, RENDER_H;
+// Координаты игрока и текущий чанк
+let player = { x: 0, y: 0, chunkX: 0, chunkY: 0 };
 
-function updateViewport() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-  RENDER_W = Math.floor(canvas.width  / TILE_SIZE);
-  RENDER_H = Math.floor(canvas.height / TILE_SIZE);
-}
-window.addEventListener('resize', updateViewport);
-updateViewport();
+// Инициализация начального чанка
+ensureChunkLoaded(0, 0);
+player.chunkX = 0;
+player.chunkY = 0;
+player.x = Math.floor(CHUNK_SIZE/2);
+player.y = Math.floor(CHUNK_SIZE/2);
+// Помещаем игрока в центр стартового чанка (можно добавить проверку, что там FLOOR)
 
-// ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };
-window.keyVector   = { x: 0, y: 0 };
-
-window.addEventListener('keydown', e => {
-  switch (e.key) {
-    case 'ArrowUp':    case 'w': window.keyVector.y = -1; break;
-    case 'ArrowDown':  case 's': window.keyVector.y = +1; break;
-    case 'ArrowLeft':  case 'a': window.keyVector.x = -1; break;
-    case 'ArrowRight': case 'd': window.keyVector.x = +1; break;
-  }
-});
-window.addEventListener('keyup', e => {
-  switch (e.key) {
-    case 'ArrowUp':    case 'w': window.keyVector.y = 0; break;
-    case 'ArrowDown':  case 's': window.keyVector.y = 0; break;
-    case 'ArrowLeft':  case 'a': window.keyVector.x = 0; break;
-    case 'ArrowRight': case 'd': window.keyVector.x = 0; break;
-  }
-});
-
-// ========== FOV (ray-casting) ==========
-function computeFOV(map, player) {
-  const visible = new Set();
-  const maxR    = 10;
-  const fullFOV = Math.PI / 3;  // 60°
-  const halfFOV = fullFOV / 2;
-  const rays    = 64;
-
-  for (let i = 0; i <= rays; i++) {
-    const angle = player.directionAngle - halfFOV + (i / rays) * fullFOV;
-    const dx    = Math.cos(angle), dy = Math.sin(angle);
-    let dist    = 0;
-
-    while (dist < maxR) {
-      const fx = player.x + dx * dist;
-      const fy = player.y + dy * dist;
-      const ix = Math.floor(fx), iy = Math.floor(fy);
-
-      map.ensureChunk(
-        Math.floor(ix / map.chunkW),
-        Math.floor(iy / map.chunkH)
-      );
-      if (ix < 0 || iy < 0 || ix >= map.cols || iy >= map.rows) break;
-
-      visible.add(`${ix},${iy}`);
-      if (map.tiles[iy][ix].type === 'wall') break;
-      dist += 0.2;
+// Функция загрузки чанка (вызывает generateChunk из map.js и соединяет с соседями)
+function ensureChunkLoaded(cx, cy) {
+    const key = `${cx},${cy}`;
+    if (!worldChunks.has(key)) {
+        const chunkData = generateChunk(cx, cy);
+        worldChunks.set(key, chunkData);
+        // Соединяем с уже загруженными соседями:
+        connectNeighborChunks(cx, cy);
     }
-  }
-
-  return visible;
 }
 
-// ========== MONSTER CLASS ==========
-class Monster {
-  constructor(x, y, real = true) {
-    this.x = x; this.y = y;
-    this.real = real;
-    this.timer = 0;
-    this.visibleTimer = 0;
-    this.dead = false;
-  }
-
-  update(dt, visible) {
-    const key = `${Math.floor(this.x)},${Math.floor(this.y)}`;
-    const inView = visible.has(key);
-    this.timer += dt;
-    this.visibleTimer = inView ? this.visibleTimer + dt : 0;
-    if (!this.real && this.timer > 5) this.dead = true;
-  }
-
-  draw(ctx) {
-    const px = (this.x + 0.5) * TILE_SIZE;
-    const py = (this.y + 0.5) * TILE_SIZE;
-
-    if (this.timer < 0.2) {
-      ctx.save();
-      ctx.globalAlpha = this.real ? 0.5 : 0.2;
-      ctx.strokeStyle = 'white';
-      ctx.beginPath();
-      ctx.arc(px, py, TILE_SIZE * 0.4, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    } else if (this.real && this.visibleTimer > 0) {
-      ctx.save();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = 'white';
-      ctx.beginPath();
-      ctx.arc(px, py, TILE_SIZE * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-}
-
-// ========== MAP & PLAYER SPAWN ==========
-window.gameMap = new GameMap(300, 300, 30, 30, TILE_SIZE);
-const gameMap = window.gameMap;
-
-gameMap.ensureChunk(0, 0);
-
-const spawnList = [];
-for (let y = 0; y < gameMap.chunkH; y++) {
-  for (let x = 0; x < gameMap.chunkW; x++) {
-    if (gameMap.tiles[y][x].type === 'floor') {
-      spawnList.push({ x, y });
-    }
-  }
-}
-const start = spawnList.length
-  ? spawnList[Math.floor(Math.random() * spawnList.length)]
-  : { x: Math.floor(gameMap.chunkW / 2), y: Math.floor(gameMap.chunkH / 2) };
-
-window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
-const player = window.player;
-
-// ========== MONSTER SPAWN ==========
-window.monsters = [];
-const monsters = window.monsters;
-setInterval(() => {
-  const vis = computeFOV(gameMap, player);
-  let x, y, key;
-  do {
-    x = Math.floor(Math.random() * gameMap.cols);
-    y = Math.floor(Math.random() * gameMap.rows);
-    key = `${x},${y}`;
-  } while (vis.has(key) || gameMap.tiles[y][x].type === 'wall');
-  monsters.push(new Monster(x, y, Math.random() < 0.3));
-}, 2000);
-
-// ========== GAME LOOP ==========
-let lastTime   = performance.now();
-let regenTimer = 0;
-const chunksToRegen = new Set();
-
-function gameLoop(now = performance.now()) {
-  const dt = (now - lastTime) / 1000;
-  lastTime = now;
-  regenTimer += dt;
-
-  // 1) INPUT & ROTATION
-  const iv1 = window.inputVector, iv2 = window.keyVector;
-  let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
-  const len = Math.hypot(iv.x, iv.y) || 1;
-  iv.x /= len; iv.y /= len;
-  if (iv.x || iv.y) {
-    player.directionAngle = Math.atan2(iv.y, iv.x);
-  }
-
-  // 2) MOVE & COLLISION
-  const nx = player.x + iv.x * SPEED * dt;
-  const ny = player.y + iv.y * SPEED * dt;
-  if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
-    player.x = nx;
-    player.y = ny;
-  }
-
-  // 3) COMPUTE FOV
-  const visible = computeFOV(gameMap, player);
-
-  // 4) MEMORY FADE & CHUNKS COLLECTION
-  gameMap.generatedChunks.forEach(chunkKey => {
-    const [cx, cy] = chunkKey.split(',').map(Number);
-    const x0 = cx * gameMap.chunkW, y0 = cy * gameMap.chunkH;
-
-    for (let yy = 0; yy < gameMap.chunkH; yy++) {
-      for (let xx = 0; xx < gameMap.chunkW; xx++) {
-        const gx = x0 + xx, gy = y0 + yy;
-        if (gy < 0 || gy >= gameMap.rows || gx < 0 || gx >= gameMap.cols) continue;
-
-        const tile = gameMap.tiles[gy][gx];
-        const key  = `${gx},${gy}`;
-
-        if (visible.has(key)) {
-          // expand visited to neighbors
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = gx + dx, ny = gy + dy;
-              if (ny >= 0 && ny < gameMap.rows && nx >= 0 && nx < gameMap.cols) {
-                gameMap.tiles[ny][nx].visited = true;
-              }
+// Соединяет границы чанка (cx,cy) с соседними чанками, если они существуют
+function connectNeighborChunks(cx, cy) {
+    const chunk = worldChunks.get(`${cx},${cy}`);
+    // Сосед слева
+    if (worldChunks.has(`${cx-1},${cy}`)) {
+        const leftChunk = worldChunks.get(`${cx-1},${cy}`);
+        for (let y = 1; y < CHUNK_SIZE-1; y++) {
+            // Если в левом чанке на правой границе есть проход, открыть левую границу текущего
+            if (leftChunk[y][CHUNK_SIZE-1] === FLOOR) {
+                chunk[y][0] = FLOOR;
             }
-          }
-          tile.memoryAlpha = 1;
-        } else if (tile.memoryAlpha > 0) {
-          tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
-          if (tile.memoryAlpha === 0) {
-            // добавляем чанк к перегенерации при полном затемнении тайла
-            const rcx = Math.floor(gx / gameMap.chunkW);
-            const rcy = Math.floor(gy / gameMap.chunkH);
-            chunksToRegen.add(`${rcx},${rcy}`);
-          }
+            // Если в текущем есть проход на левой границе, открыть правую границу левого
+            if (chunk[y][0] === FLOOR) {
+                leftChunk[y][CHUNK_SIZE-1] = FLOOR;
+            }
         }
-      }
     }
-  });
-
-  // 5) THROTTLED PER-CHUNK REGENERATION
-  if (regenTimer >= REGEN_INTERVAL) {
-    regenTimer -= REGEN_INTERVAL;
-    if (chunksToRegen.size > 0) {
-      gameMap.regenerateChunksPreserveFOV(chunksToRegen, computeFOV, player);
-      chunksToRegen.clear();
+    // Сосед справа
+    if (worldChunks.has(`${cx+1},${cy}`)) {
+        const rightChunk = worldChunks.get(`${cx+1},${cy}`);
+        for (let y = 1; y < CHUNK_SIZE-1; y++) {
+            if (rightChunk[y][0] === FLOOR) {
+                chunk[y][CHUNK_SIZE-1] = FLOOR;
+            }
+            if (chunk[y][CHUNK_SIZE-1] === FLOOR) {
+                rightChunk[y][0] = FLOOR;
+            }
+        }
     }
-  }
-
-  // 6) UPDATE & CLEAN MONSTERS
-  monsters.forEach(m => m.update(dt, visible));
-  window.monsters = monsters.filter(m => !m.dead);
-
-  // 7) ENSURE VISIBLE CHUNKS
-  const camLeft   = player.x - RENDER_W / 2;
-  const camTop    = player.y - RENDER_H / 2;
-  const camRight  = player.x + RENDER_W / 2;
-  const camBottom = player.y + RENDER_H / 2;
-
-  const minCX = Math.floor(camLeft  / gameMap.chunkW);
-  const maxCX = Math.floor((camRight - 1) / gameMap.chunkW);
-  const minCY = Math.floor(camTop   / gameMap.chunkH);
-  const maxCY = Math.floor((camBottom - 1) / gameMap.chunkH);
-
-  for (let cy = minCY; cy <= maxCY; cy++) {
-    for (let cx = minCX; cx <= maxCX; cx++) {
-      gameMap.ensureChunk(cx, cy);
+    // Сосед сверху
+    if (worldChunks.has(`${cx},${cy-1}`)) {
+        const topChunk = worldChunks.get(`${cx},${cy-1}`);
+        for (let x = 1; x < CHUNK_SIZE-1; x++) {
+            if (topChunk[CHUNK_SIZE-1][x] === FLOOR) {
+                chunk[0][x] = FLOOR;
+            }
+            if (chunk[0][x] === FLOOR) {
+                topChunk[CHUNK_SIZE-1][x] = FLOOR;
+            }
+        }
     }
-  }
-
-  // 8) RENDER
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.save();
-  ctx.translate(
-    - (player.x - RENDER_W/2) * TILE_SIZE,
-    - (player.y - RENDER_H/2) * TILE_SIZE
-  );
-
-  for (
-    let y = Math.floor(player.y - RENDER_H/2);
-    y < Math.ceil(player.y + RENDER_H/2);
-    y++
-  ) {
-    if (y < 0 || y >= gameMap.rows) continue;
-    for (
-      let x = Math.floor(player.x - RENDER_W/2);
-      x < Math.ceil(player.x + RENDER_W/2);
-      x++
-    ) {
-      if (x < 0 || x >= gameMap.cols) continue;
-      const tile = gameMap.tiles[y][x];
-      ctx.globalAlpha = tile.memoryAlpha;
-      ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
-      ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    // Сосед снизу
+    if (worldChunks.has(`${cx},${cy+1}`)) {
+        const bottomChunk = worldChunks.get(`${cx},${cy+1}`);
+        for (let x = 1; x < CHUNK_SIZE-1; x++) {
+            if (bottomChunk[0][x] === FLOOR) {
+                chunk[CHUNK_SIZE-1][x] = FLOOR;
+            }
+            if (chunk[CHUNK_SIZE-1][x] === FLOOR) {
+                bottomChunk[0][x] = FLOOR;
+            }
+        }
     }
-  }
-  ctx.globalAlpha = 1;
-
-  monsters.forEach(m => m.draw(ctx));
-
-  const px = (player.x + 0.5) * TILE_SIZE;
-  const py = (player.y + 0.5) * TILE_SIZE;
-  ctx.fillStyle = 'red';
-  ctx.beginPath();
-  ctx.arc(px, py, TILE_SIZE * 0.4, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.restore();
-  requestAnimationFrame(gameLoop);
 }
 
-gameLoop();
+// Обновление позиции игрока (вызывается при вводе или физическом перемещении)
+function movePlayer(dx, dy) {
+    const newX = player.x + dx;
+    const newY = player.y + dy;
+    // Проверка границ текущего чанка: позволяем выйти, если там есть проход в соседний
+    if (newX < 0) {
+        // переход в левый чанк
+        player.chunkX -= 1;
+        player.x = CHUNK_SIZE - 1;  // появляемся на правой стороне соседнего чанка
+    } else if (newX >= CHUNK_SIZE) {
+        // переход в правый чанк
+        player.chunkX += 1;
+        player.x = 0;
+    } else {
+        player.x = newX;
+    }
+    if (newY < 0) {
+        // переход в верхний чанк
+        player.chunkY -= 1;
+        player.y = CHUNK_SIZE - 1;
+    } else if (newY >= CHUNK_SIZE) {
+        // переход в нижний чанк
+        player.chunkY += 1;
+        player.y = 0;
+    } else {
+        player.y = newY;
+    }
+
+    // Загружаем текущий чанк (вдруг новый)
+    ensureChunkLoaded(player.chunkX, player.chunkY);
+
+    // Проверяем соседние чанки в радиусе renderDistance и загружаем их
+    for (let cx = player.chunkX - renderDistance; cx <= player.chunkX + renderDistance; cx++) {
+        for (let cy = player.chunkY - renderDistance; cy <= player.chunkY + renderDistance; cy++) {
+            ensureChunkLoaded(cx, cy);
+        }
+    }
+
+    // Забываем чанки, которые вне радиуса renderDistance
+    forgetDistantChunks(player.chunkX, player.chunkY);
+
+    // После этого можно обновить отображение: отрисовать текущий видимый участок.
+    renderVisibleArea();
+}
+
+// Функция забывания (выгрузки) далёких чанков, чтобы освободить память
+function forgetDistantChunks(centerCx, centerCy) {
+    for (let key of worldChunks.keys()) {
+        const [cx, cy] = key.split(',').map(Number);
+        if (Math.abs(cx - centerCx) > renderDistance || Math.abs(cy - centerCy) > renderDistance) {
+            // Удаляем данные чанка
+            worldChunks.delete(key);
+            // Дополнительно можно удалить связанные объекты, врагов, или сохранить прогресс вpersistent-хранилище если нужно
+        }
+    }
+}
+
+// Рендеринг видимой области (с учётом поля зрения игрока)
+function renderVisibleArea() {
+    // Размер поля зрения (например, радиус 10 клеток)
+    const FOV = 10;
+    const visibleTiles = [];
+    // Собираем тайлы из ближайших чанков вокруг игрока в радиусе FOV
+    for (let dy = -FOV; dy <= FOV; dy++) {
+        for (let dx = -FOV; dx <= FOV; dx++) {
+            const tx = player.x + dx;
+            const ty = player.y + dy;
+            const chunkX = player.chunkX + Math.floor(tx / CHUNK_SIZE);
+            const chunkY = player.chunkY + Math.floor(ty / CHUNK_SIZE);
+            const localX = (tx % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+            const localY = (ty % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+            ensureChunkLoaded(chunkX, chunkY);
+            const tile = worldChunks.get(`${chunkX},${chunkY}`)[localY][localX];
+            if (tile === FLOOR) {
+                visibleTiles.push({x: player.chunkX*CHUNK_SIZE+tx, y: player.chunkY*CHUNK_SIZE+ty});
+            }
+        }
+    }
+    // ... код отрисовки visibleTiles на экран ...
+}
