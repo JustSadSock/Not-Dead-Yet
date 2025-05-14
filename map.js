@@ -2,28 +2,31 @@
 
 class GameMap {
   /**
-   * cols×rows — общий размер мира в тайлах,
-   * renderW×renderH — размер чанка (видимой области) в тайлах,
-   * tileSize — пикселей на тайл (для справки).
+   * @param cols  — общее число тайлов по X (можно большое, например 1000)
+   * @param rows  — общее число тайлов по Y
+   * @param renderW — ширина чанка (в тайлах), например 30
+   * @param renderH — высота чанка (в тайлах), например 30
+   * @param tileSize — пикселей на тайл (только для справки)
    */
-  constructor(cols = 100, rows = 100, renderW = 30, renderH = 30, tileSize = 100) {
+  constructor(cols = 300, rows = 300, renderW = 30, renderH = 30, tileSize = 100) {
     this.cols     = cols;
     this.rows     = rows;
     this.renderW  = renderW;
     this.renderH  = renderH;
     this.tileSize = tileSize;
 
-    // 1) Инициализируем всю карту стенами + memoryAlpha=0
+    // Массив тайлов: заполним пустыми стенами, но чанки ещё не «рабочие»
     this.tiles = Array.from({ length: rows }, () =>
       Array.from({ length: cols }, () => ({ type: 'wall', memoryAlpha: 0 }))
     );
 
-    // 2) Для детерминированной генерации чанков
+    // Мирозданческий seed
     this.worldSeed       = Math.floor(Math.random() * 0xFFFFFFFF);
-    this.chunkRegenCount = {};  // счётчик регенераций для каждого чанка
+    // Счётчик регенераций чанков
+    this.chunkRegenCount = {};   // ключ "cx,cy" → число вызовов generateChunk
 
-    // 3) Вспомогательная Mulberry32-функция
-    this._mulberry32 = seed => {
+    // Mulberry32-фабрика
+    this._makeMulberry = seed => {
       let t = seed >>> 0;
       return () => {
         t += 0x6D2B79F5;
@@ -33,28 +36,43 @@ class GameMap {
       };
     };
 
-    // 4) Сразу генерируем стартовый чанк [0,0]
-    this.generateChunk(0, 0);
+    // Множество сгенерированных чанков
+    this.generatedChunks = new Set();
+
+    // Генерируем чанк с координатами, где стартует игрок (0,0)
+    this.ensureChunk(0, 0);
   }
 
   /**
-   * Генерация / перегенерация чанка (cx, cy):
-   * 3–5 комнат + широкие (2-тайловые) коридоры.
+   * Проверка, сгенерирован ли чанк (cx,cy) — если нет, вызываем generateChunk.
+   */
+  ensureChunk(cx, cy) {
+    const key = `${cx},${cy}`;
+    if (!this.generatedChunks.has(key)) {
+      this.generateChunk(cx, cy);
+      this.generatedChunks.add(key);
+    }
+  }
+
+  /**
+   * Генерация или перегенерация чанка (cx, cy):
+   * создаём 3–5 комнат и широкие (2-тайловые) коридоры между ними.
    */
   generateChunk(cx, cy) {
-    const key = `${cx},${cy}`;
+    // счётчик регенераций
+    const key   = `${cx},${cy}`;
     const count = (this.chunkRegenCount[key] || 0) + 1;
     this.chunkRegenCount[key] = count;
 
-    // Детерминированный сид для этого чанка
+    // детерминированный seed для этого чанка
     const seed = this.worldSeed ^ (cx * 0x9249249) ^ (cy << 16) ^ count;
-    const rng  = this._mulberry32(seed);
+    const rng  = this._makeMulberry(seed);
 
-    // Границы чанка в тайлах
+    // абсолютные координаты чанка в тайлах
     const x0 = cx * this.renderW;
     const y0 = cy * this.renderH;
 
-    // 1) Сбрасываем весь чанк в стены + memoryAlpha=0
+    // 1) Сброс всего чанка в «стену» + сброс memoryAlpha
     for (let y = y0; y < y0 + this.renderH; y++) {
       if (y < 0 || y >= this.rows) continue;
       for (let x = x0; x < x0 + this.renderW; x++) {
@@ -63,7 +81,7 @@ class GameMap {
       }
     }
 
-    // 2) Генерируем 3–5 случайных комнат
+    // 2) Сгенерировать 3–5 комнат
     const rooms = [];
     const roomCount = 3 + Math.floor(rng() * 3);
     for (let i = 0; i < roomCount; i++) {
@@ -73,7 +91,7 @@ class GameMap {
       const ry = y0 + Math.floor(rng() * (this.renderH - h));
       rooms.push({ rx, ry, w, h });
 
-      // заливаем пол внутри комнаты
+      // чистим пол
       for (let yy = ry; yy < ry + h; yy++) {
         for (let xx = rx; xx < rx + w; xx++) {
           if (yy >= 0 && yy < this.rows && xx >= 0 && xx < this.cols) {
@@ -85,7 +103,7 @@ class GameMap {
 
     // 3) Соединяем комнаты 2-тайловыми коридорами
     for (let i = 1; i < rooms.length; i++) {
-      const A  = rooms[i - 1], B = rooms[i];
+      const A = rooms[i - 1], B = rooms[i];
       const ax = Math.floor(A.rx + A.w / 2),
             ay = Math.floor(A.ry + A.h / 2);
       const bx = Math.floor(B.rx + B.w / 2),
@@ -113,23 +131,27 @@ class GameMap {
   }
 
   /**
-   * true, если (x,y) стена или вне границ.
+   * Коллизия: true, если (x,y) стена или вне границ.
+   * При обращении к новому чанку автоматически его создаём.
    */
   isWall(x, y) {
+    const cx = Math.floor(x / this.renderW);
+    const cy = Math.floor(y / this.renderH);
+    this.ensureChunk(cx, cy);
     if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return true;
     return this.tiles[y][x].type === 'wall';
   }
 
   /**
-   * Перегенерирует чанк забытого тайла (x,y),
-   * но **не** чанк, в котором сейчас стоит игрок:
-   * в нём просто сбросит memoryAlpha без смены типа.
+   * Когда тайл (x,y) «забывается» (memoryAlpha → 0),
+   * перегенерируем чанк, где он лежит, за исключением чанка
+   * с игроком — в нём мы просто сбросим memoryAlpha у этого тайла.
    */
   regenerateTile(x, y) {
     const cx = Math.floor(x / this.renderW);
     const cy = Math.floor(y / this.renderH);
 
-    // если игрок в том же чанке — только сброс memoryAlpha
+    // если игрок в том же чанке — не трогаем структуру, только память
     if (window.player) {
       const pcx = Math.floor(window.player.x / this.renderW);
       const pcy = Math.floor(window.player.y / this.renderH);
@@ -139,7 +161,7 @@ class GameMap {
       }
     }
 
-    // иначе полностью перегенерируем чанк
+    // иначе полностью пересоздаём чанк
     this.generateChunk(cx, cy);
   }
 }
