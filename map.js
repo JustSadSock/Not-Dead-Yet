@@ -143,9 +143,6 @@ class GameMap {
       Array.from({ length: this.renderW }, () => ({ type: 'wall' }))
     );
 
-    const x0 = cx * this.renderW;
-    const y0 = cy * this.renderH;
-
     // комнаты
     const rooms      = [];
     const roomCount  = 3 + Math.floor(rng() * 3);
@@ -204,7 +201,7 @@ class GameMap {
   /**
    * При «забывании» тайла (memoryAlpha → 0):
    * — генерим буфер чанка,
-   * — копируем из него **только** те клетки,
+   * — копируем из него только те клетки,
    *   которые игрок уже видел (visited===true) и у которых memoryAlpha===0.
    */
   regenerateTile(x, y) {
@@ -213,10 +210,8 @@ class GameMap {
     const x0 = cx * this.renderW;
     const y0 = cy * this.renderH;
 
-    // получаем свежий вариант всего чанка
     const buffer = this._generateChunkBuffer(cx, cy);
 
-    // патчим только «visited и забытые» тайлы
     for (let yy = 0; yy < this.renderH; yy++) {
       for (let xx = 0; xx < this.renderW; xx++) {
         const gx = x0 + xx, gy = y0 + yy;
@@ -224,7 +219,6 @@ class GameMap {
         const tile = this.tiles[gy][gx];
         if (tile.visited && tile.memoryAlpha === 0) {
           tile.type = buffer[yy][xx].type;
-          // memoryAlpha остаётся 0, visited=true
         }
       }
     }
