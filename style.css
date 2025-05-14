@@ -1,69 +1,48 @@
 /* style.css */
 
-/* ================================ */
-/* Канвас: растягиваем на весь экран */
-/* ================================ */
+/* 1) Канвас: увеличиваем масштаб карты до 150% */
+#gameContainer {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
 #gameCanvas {
-  /* На десктопе (pointer: fine) — по ширине */
-  width: 100%;
+  /* делим ширину на 1.5, чтобы после масштабирования занять всю ширину */
+  width: calc(100% / 1.5);
   height: auto;
-  aspect-ratio: 1 / 1;
   max-height: 100%;
-  object-fit: contain;
+  /* масштабируем на 150% */
+  transform: scale(1.5);
+  transform-origin: center center;
+  display: block;
 }
 
-@media (pointer: coarse) {
-  /* На мобильных (pointer: coarse) — по высоте экрана */
-  #gameCanvas {
-    width: auto;
-    height: 100%;
-    max-width: 100vw;
-    max-height: 100%;
-    aspect-ratio: 1 / 1;
-    object-fit: contain;
-  }
+/* 2) Джойстик: поднимаем ещё выше (80px от safe-area) */
+#joystickBase {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 80px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 80px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50%;
+  touch-action: none;
+  pointer-events: all;
 }
-
-/* ================================ */
-/* Джойстик: разные настройки для touch и desktop */
-/* ================================ */
-@media (pointer: fine) {
-  /* Десктоп — компактный джойстик чуть выше низа */
-  #joystickBase {
-    bottom: calc(env(safe-area-inset-bottom, 20px) + 40px);
-    width: 80px;
-    height: 80px;
-  }
-  #joystickKnob {
-    width: 40px;
-    height: 40px;
-    margin: -20px 0 0 -20px;
-  }
-}
-
-@media (pointer: coarse) {
-  /* Мобильные — джойстик вдвое выше и крупнее */
-  #joystickBase {
-    position: absolute;
-    bottom: calc(env(safe-area-inset-bottom, 20px) + 160px);
-    left: 50%;
-    transform: translateX(-50%);
-    width: 160px;
-    height: 160px;
-    background: rgba(255,255,255,0.15);
-    border-radius: 50%;
-    touch-action: none;
-    pointer-events: all;
-  }
-  #joystickKnob {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 80px;
-    height: 80px;
-    margin: -40px 0 0 -40px;
-    background: rgba(255,255,255,0.6);
-    border-radius: 50%;
-    pointer-events: none;
-  }
+#joystickKnob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  background: rgba(255,255,255,0.6);
+  border-radius: 50%;
+  pointer-events: none;
 }
