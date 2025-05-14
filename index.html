@@ -2,17 +2,66 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+  <!-- Важно: отключаем масштабирование и даём браузеру знать, что у нас мобильная версия -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Forgotten Roguelike</title>
-  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    /* Канвас занимает весь экран за вычетом зоны под джойстик */
+    #gameCanvas {
+      display: block;
+      width: 100vw;
+      height: calc(100vh - 120px);
+      touch-action: none; /* чтобы браузер не перехватывал свайпы */
+      background: #000;
+    }
+    /* Контейнер для джойстика */
+    #joystickContainer {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100vw;
+      height: 120px;
+      pointer-events: none; /* чтобы не блокировать канвас вне самой базы джойстика */
+    }
+    /* База джойстика */
+    #joystickBase {
+      position: absolute;
+      left: 20px;
+      bottom: 20px;
+      width: 80px;
+      height: 80px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 50%;
+      pointer-events: all;
+      touch-action: none;
+    }
+    /* “Ручка” джойстика */
+    #joystickKnob {
+      position: absolute;
+      left: calc(20px + 40px);
+      bottom: calc(20px + 40px);
+      width: 40px;
+      height: 40px;
+      background: rgba(255,255,255,0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+  </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
 
   <div id="joystickContainer">
-    <div id="joystickBase">
-      <div id="joystickKnob"></div>
-    </div>
+    <div id="joystickBase"></div>
+    <div id="joystickKnob"></div>
   </div>
 
   <script src="map.js"></script>
