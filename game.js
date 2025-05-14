@@ -1,112 +1,118 @@
 // game.js
 
 // ========== КОНСТАНТЫ ==========
-const TILE_SIZE            = 32;   // размер тайла в пикселях
-const MAP_W                = 40;   // ширина карты в тайлах
-const MAP_H                = 30;   // высота карты в тайлах
-const SPEED                = 3;    // скорость игрока (тайлы/секунда)
-const FOG_FADE             = 0.5;  // скорость тускнения вне обзора (альфа/секунда)
-const JOYSTICK_ZONE_HEIGHT = 120;  // высота зоны под джойстик (px)
+const RENDER_W   = 30,    // область 30×30 тайлов
+      RENDER_H   = 30,
+      TILE_SIZE  = 80,    // 2.5×32
+      SPEED      = 3,     // тайлы/сек
+      FOG_FADE   = 0.5;   // альфа/сек
 
-// ========== CANVAS & RESIZE ==========
-const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
+// ========== CANVAS ==========
+const canvas = document.getElementById('gameCanvas'),
+      ctx    = canvas.getContext('2d');
 
-// Логические размеры
-canvas.width  = MAP_W * TILE_SIZE;
-canvas.height = MAP_H * TILE_SIZE;
-
-// Адаптивные CSS-размеры под мобильный экран
-function resizeCanvas() {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight - JOYSTICK_ZONE_HEIGHT;
-  canvas.style.width  = vw + 'px';
-  canvas.style.height = vh + 'px';
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+// внутренняя резолюция: 30×30 тайлов
+canvas.width  = RENDER_W * TILE_SIZE;
+canvas.height = RENDER_H * TILE_SIZE;
 
 // ========== ИГРОВЫЕ ОБЪЕКТЫ ==========
-const gameMap = new GameMap(MAP_W, MAP_H, TILE_SIZE);
+const gameMap = new GameMap(100, 100, RENDER_W, RENDER_H, TILE_SIZE);
 const player  = {
-  x: MAP_W / 2,             // позиция в тайлах (float для плавного движения)
-  y: MAP_H / 2,
-  directionAngle: 0         // угол взгляда в радианах
+  x: gameMap.rooms[0].cx + 0.5,  // стартуем в центре первой комнаты
+  y: gameMap.rooms[0].cy + 0.5,
+  dir: 0                         // угол взгляда
 };
 
-// Таймер последнего кадра
-let lastTime = performance.now();
+let last = performance.now();
 
-// ========== ОСНОВНОЙ ЦИКЛ ==========
+// ========== ЦИКЛ ==========
 function gameLoop(now = performance.now()) {
-  const dt = (now - lastTime) / 1000;
-  lastTime = now;
+  const dt = (now - last) / 1000;
+  last = now;
 
-  // --- 1) ДВИЖЕНИЕ И ПОВОРОТ ---
+  // 1) Читаем вектор от джойстика
   const iv = window.inputVector || { x: 0, y: 0 };
-  player.x += iv.x * SPEED * dt;
-  player.y += iv.y * SPEED * dt;
-  // ограничиваем внутри карты
-  player.x = Math.max(0, Math.min(player.x, MAP_W - 1));
-  player.y = Math.max(0, Math.min(player.y, MAP_H - 1));
 
-  // --- 2) ВЫЧИСЛЕНИЕ ПОЛЯ ЗРЕНИЯ ---
+  // 2) Предлагаем движение
+  let nx = player.x + iv.x * SPEED * dt;
+  let ny = player.y + iv.y * SPEED * dt;
+
+  // 3) Проверяем коллизию со стенами (по тайлу)
+  // по X
+  const tx = Math.floor(nx), ty = Math.floor(player.y);
+  if (!gameMap.isWall(tx, ty)) player.x = nx;
+  // по Y
+  const ty2 = Math.floor(ny), tx2 = Math.floor(player.x);
+  if (!gameMap.isWall(tx2, ty2)) player.y = ny;
+
+  // 4) Обновляем направление взгляда
+  player.dir = window.player && window.player.directionAngle || player.dir;
+
+  // 5) Считаем FOV из центра клетки
   const visible = computeFOV(gameMap, {
-    x: Math.floor(player.x),
-    y: Math.floor(player.y),
-    directionAngle: player.directionAngle
+    x: Math.floor(player.x) + 0.5,
+    y: Math.floor(player.y) + 0.5,
+    directionAngle: player.dir
   });
 
-  // --- 3) ОБНОВЛЕНИЕ memoryAlpha И РЕГЕНЕРАЦИЯ ТАЙЛОВ ---
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
-      const tile = gameMap.tiles[y][x];
-      const key  = `${x},${y}`;
+  // 6) memoryAlpha + перегенерация
+  for (let y = 0; y < gameMap.rows; y++) {
+    for (let x = 0; x < gameMap.cols; x++) {
+      const t = gameMap.tiles[y][x];
+      const key = `${x},${y}`;
       if (visible.has(key)) {
-        tile.memoryAlpha = 1;
-      } else if (tile.memoryAlpha > 0) {
-        tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
-        if (tile.memoryAlpha === 0) {
+        t.memoryAlpha = 1;
+      } else if (t.memoryAlpha > 0) {
+        t.memoryAlpha = Math.max(0, t.memoryAlpha - FOG_FADE * dt);
+        if (t.memoryAlpha === 0) {
           gameMap.regenerateTile(x, y);
         }
       }
     }
   }
 
-  // --- 4) ОБНОВЛЕНИЕ И ОЧИСТКА МОНСТРОВ ---
+  // 7) Обновляем монстров
   window.monsters.forEach(m => m.update(dt, visible));
   window.monsters = window.monsters.filter(m => !m.dead);
 
-  // --- 5) ОТРИСОВКА КАРТЫ ---
+  // 8) Отрисовка — камера следует за игроком
+  const camX = player.x - RENDER_W/2,
+        camY = player.y - RENDER_H/2;
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
-      const tile = gameMap.tiles[y][x];
+
+  // тайлы
+  for (let ry = 0; ry < RENDER_H; ry++) {
+    for (let rx = 0; rx < RENDER_W; rx++) {
+      const mx = Math.floor(camX + rx),
+            my = Math.floor(camY + ry);
+      if (mx < 0 || my < 0 || mx >= gameMap.cols || my >= gameMap.rows) continue;
+      const tile = gameMap.tiles[my][mx];
       ctx.globalAlpha = tile.memoryAlpha;
       ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
-      ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      ctx.fillRect(rx * TILE_SIZE, ry * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
   ctx.globalAlpha = 1;
 
-  // --- 6) ОТРИСОВКА МОНСТРОВ ---
-  window.monsters.forEach(m => m.draw(ctx));
+  // монстры
+  window.monsters.forEach(m => {
+    // рисуем их смещёнными на камеру
+    const sx = (m.x - camX) * TILE_SIZE,
+          sy = (m.y - camY) * TILE_SIZE;
+    m.drawAt(ctx, sx, sy);
+  });
 
-  // --- 7) ОТРИСОВКА ИГРОКА ---
+  // игрок – всегда в центре: (RENDER_W/2, RENDER_H/2)
+  const px = (RENDER_W/2 + 0.5) * TILE_SIZE,
+        py = (RENDER_H/2 + 0.5) * TILE_SIZE;
   ctx.fillStyle = 'red';
   ctx.beginPath();
-  ctx.arc(
-    (player.x + 0.5) * TILE_SIZE,
-    (player.y + 0.5) * TILE_SIZE,
-    TILE_SIZE * 0.4,
-    0,
-    Math.PI * 2
-  );
+  ctx.arc(px, py, TILE_SIZE * 0.4, 0, Math.PI*2);
   ctx.fill();
 
-  // --- 8) НОВЫЙ КАДР ---
   requestAnimationFrame(gameLoop);
 }
 
-// Стартуем!
-requestAnimationFrame(gameLoop);
+// старт
+gameLoop();
