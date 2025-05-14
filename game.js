@@ -1,7 +1,7 @@
 // game.js
 
 // ========== CONSTANTS ==========
-const TILE_SIZE  = 40;    // размер тайла уменьшен в 2.5× (ранее 100px)
+const TILE_SIZE  = 27;    // уменьшено в 1.5× от 40 (≈26.7 → 27px)
 const SPEED      = 3;     // тайлов в секунду
 const FOG_FADE   = 0.5;   // альфа/секунда для “памяти”
 
@@ -29,8 +29,8 @@ window.addEventListener('resize', updateViewport);
 updateViewport();
 
 // ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };  // тач-джойстик
-window.keyVector   = { x: 0, y: 0 };  // клавиши
+window.inputVector = { x: 0, y: 0 };  // сенсорный джойстик
+window.keyVector   = { x: 0, y: 0 };  // клавиатура
 
 window.addEventListener('keydown', e => {
   switch (e.key) {
@@ -49,11 +49,11 @@ window.addEventListener('keyup', e => {
   }
 });
 
-// ========== FOV (ray‐casting) ==========
+// ========== FOV (ray-casting) ==========
 function computeFOV(map, player) {
   const visible  = new Set();
   const maxR     = 10;
-  const fullFOV  = Math.PI / 3; // 60°
+  const fullFOV  = Math.PI / 3;
   const halfFOV  = fullFOV / 2;
   const rays     = 64;
 
@@ -120,8 +120,8 @@ class Monster {
 window.gameMap = new GameMap(
   300,            // total cols
   300,            // total rows
-  RENDER_W,       // renderW tiles (updated)
-  RENDER_H,       // renderH tiles (updated)
+  RENDER_W,       // renderW tiles wide
+  RENDER_H,       // renderH tiles tall
   TILE_SIZE
 );
 const gameMap = window.gameMap;
@@ -141,7 +141,7 @@ const start = spawnList.length
 window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
 const player = window.player;
 
-// monsters list + spawn
+// monsters list & spawn
 window.monsters = [];
 const monsters = window.monsters;
 setInterval(() => {
@@ -201,10 +201,12 @@ function gameLoop(now = performance.now()) {
   window.monsters = monsters.filter(m => !m.dead);
 
   // 6) render
-  const camX = player.x - RENDER_W/2, camY = player.y - RENDER_H/2;
+  const camX = player.x - RENDER_W/2;
+  const camY = player.y - RENDER_H/2;
   const startX = Math.floor(camX), startY = Math.floor(camY);
   const endX   = Math.ceil(camX + RENDER_W), endY = Math.ceil(camY + RENDER_H);
 
+  // ensure neighbor chunks
   for (let cy = Math.floor(startY/RENDER_H); cy <= Math.floor((endY-1)/RENDER_H); cy++) {
     for (let cx = Math.floor(startX/RENDER_W); cx <= Math.floor((endX-1)/RENDER_W); cx++) {
       gameMap.ensureChunk(cx, cy);
