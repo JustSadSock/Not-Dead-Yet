@@ -1,169 +1,278 @@
 /**
- * map.js – Логика генерации карты и вспомогательных функций для тайлов.
+ * map.js
+ *
+ * Полная логика бесконечной процедурной генерации карты чанками,
+ * динамической подгрузки/выгрузки и механики «забывания» с повторной
+ * генерацией забытых областей (за исключением текущего поля зрения).
+ *
+ * Использует детерминированный PRNG (seedrandom.js) для повторяемости чанков.
  */
 
-// Константы типов тайлов
-const WALL = 0;
+// ============================================================================
+//  Константы и хранилище чанков
+// ============================================================================
+const WALL  = 0;
 const FLOOR = 1;
 
-// Размеры чанка (ширина и высота в клетках)
-const WIDTH = 64;
-const HEIGHT = 64;
+// Размер одного чанка в тайлах
+const CHUNK_W = 30;
+const CHUNK_H = 30;
 
-// Карта мира, хранящая загруженные чанки (ключ – "cx,cy", значение – 2D массив тайлов)
+// Глобальное хранилище сгенерированных чанков
+// Ключ: "cx,cy" → значение: объект { tiles: [...], exits: {...}, regenCount: N }
 const worldChunks = new Map();
 
-// Функция генерации пустого чанка, заполненного стенами
-function createEmptyChunk(width, height, value=WALL) {
-    const chunk = [];
-    for (let y = 0; y < height; y++) {
-        chunk[y] = new Array(width).fill(value);
-    }
-    return chunk;
+// ============================================================================
+//  Функция генерации пустого массива тайлов (filledValue = WALL или FLOOR)
+// ============================================================================
+function createEmptyTiles(width, height, filledValue = WALL) {
+  const arr = new Array(height);
+  for (let y = 0; y < height; y++) {
+    arr[y] = new Array(width).fill(filledValue);
+  }
+  return arr;
 }
 
-// Основная функция генерации чанка по координатам (cx, cy)
+// ============================================================================
+//  Основная функция генерации чанка по координатам (cx, cy)
+//  Возвращает объект { tiles, exits, regenCount }.
+//  Для повторной генерации гарантирует новый состав лабиринта.
+// ============================================================================
 function generateChunk(cx, cy) {
-    // Инициализируем детерминированный ГСЧ для этого чанка (требуется библиотека seedrandom)
-    if (Math.seedrandom) {
-        Math.seedrandom(`worldSeed_${cx}_${cy}`);
-    }
-    const chunk = createEmptyChunk(WIDTH, HEIGHT, WALL);
+  // 1) Детерминированный PRNG на основе глобального seed + координаты + порядковый номер регена
+  const key        = `${cx},${cy}`;
+  const prev       = worldChunks.get(key);
+  const regenCount = prev ? prev.regenCount + 1 : 1;
+  // Зерно: фиксированное мировое + координаты + count
+  if (Math.seedrandom) {
+    Math.seedrandom(`worldSeed|${cx},${cy}|${regenCount}`);
+  }
+  // 2) Создаём чистый массив стен
+  const tiles = createEmptyTiles(CHUNK_W, CHUNK_H, WALL);
+  // 3) Карвинговый алгоритм (пример – случайное блуждание)
+  carveRandomCaves(tiles);
+  // 4) Пост-обработка: устраняем диагонали и узкие коридоры
+  fixDiagonalsAndCorridors(tiles);
+  // 5) Пост-обработка: ищем тупики и пробиваем к границе
+  removeDeadEnds(tiles);
+  // 6) Подготавливаем структуру выходов (чтобы соседям прорезать ответные двери)
+  const exits = extractBorderExits(tiles);
 
-    // 1. Проходимся случайным образом и выкапываем коридоры (алгоритм "пещеры" или "лабиринта")
-    carveCaves(chunk);
-
-    // 2. Пост-обработка: убираем диагональные проходы и расширяем узкие коридоры
-    fixDiagonalAndCorridors(chunk);
-
-    // 3. Пост-обработка: убираем тупики (соединяем их с остальным лабиринтом)
-    removeDeadEnds(chunk, cx, cy);
-
-    return chunk;
+  // 7) Сохраняем и возвращаем чанковый объект
+  const chunkObj = { tiles, exits, regenCount };
+  worldChunks.set(key, chunkObj);
+  return chunkObj;
 }
 
-// Пример алгоритма создания пещер/лабиринта (случайное блуждание либо DFS)
-function carveCaves(chunk) {
-    // Для простоты: начнём от центра и будем случайно рыть туннели
-    let x = Math.floor(WIDTH/2), y = Math.floor(HEIGHT/2);
-    chunk[y][x] = FLOOR;
-    for (let i = 0; i < 1000; i++) {  // 1000 шагов случайного блуждания
-        const dir = Math.floor(Math.random() * 4);
-        let nx = x, ny = y;
-        if (dir === 0) nx++;
-        if (dir === 1) nx--;
-        if (dir === 2) ny++;
-        if (dir === 3) ny--;
-        // Проверяем границы
-        if (nx <= 0 || nx >= WIDTH-1 || ny <= 0 || ny >= HEIGHT-1) {
-            // Дошли до границы – не выходим за край, но можно оставить как тупик или пробить выход позже
-            x = nx; y = ny;
-            continue;
-        }
-        // Пробиваем стену, если еще не пробито
-        if (chunk[ny][nx] === WALL) {
-            chunk[ny][nx] = FLOOR;
-        }
-        // Передвигаемся
-        x = nx; y = ny;
-    }
+// ============================================================================
+//  Карвинг «случайных пещер» – простой пример генерации туннелей
+// ============================================================================
+function carveRandomCaves(tiles) {
+  let x = Math.floor(CHUNK_W/2), y = Math.floor(CHUNK_H/2);
+  tiles[y][x] = FLOOR;
+  const steps = CHUNK_W * CHUNK_H;  // густота туннелей
+  for (let i = 0; i < steps; i++) {
+    const dir = Math.floor(Math.random() * 4);
+    if (dir === 0 && x < CHUNK_W-1) x++;
+    if (dir === 1 && x > 0)           x--;
+    if (dir === 2 && y < CHUNK_H-1) y++;
+    if (dir === 3 && y > 0)           y--;
+    tiles[y][x] = FLOOR;
+  }
 }
 
-// Устранение диагональных проходов и расширение узких коридоров
-function fixDiagonalAndCorridors(chunk) {
-    for (let y = 1; y < HEIGHT; y++) {
-        for (let x = 1; x < WIDTH; x++) {
-            if (chunk[y][x] === FLOOR) {
-                // Если нашли диагональное соприкосновение: сверху слева
-                if (chunk[y-1][x-1] === FLOOR && chunk[y-1][x] === WALL && chunk[y][x-1] === WALL) {
-                    // Открываем одну из стен (например, сверху)
-                    chunk[y-1][x] = FLOOR;
-                }
-                // Диагональ: сверху справа
-                if (chunk[y-1][x+1] !== undefined && chunk[y-1][x+1] === FLOOR && chunk[y-1][x] === WALL && chunk[y][x+1] === WALL) {
-                    chunk[y-1][x] = FLOOR;
-                }
-                // Диагональ: снизу слева
-                if (chunk[y+1] !== undefined && chunk[y+1][x-1] === FLOOR && chunk[y][x-1] === WALL && chunk[y+1][x] === WALL) {
-                    chunk[y][x-1] = FLOOR;
-                }
-                // Диагональ: снизу справа
-                if (chunk[y+1] !== undefined && chunk[y+1][x+1] === FLOOR && chunk[y][x+1] === WALL && chunk[y+1][x] === WALL) {
-                    chunk[y][x+1] = FLOOR;
-                }
+// ============================================================================
+//  Убираем диагональные «дыры» и расширяем узкие коридоры до 2 клеток
+// ============================================================================
+function fixDiagonalsAndCorridors(t) {
+  for (let y = 1; y < CHUNK_H; y++) {
+    for (let x = 1; x < CHUNK_W; x++) {
+      if (t[y][x] !== FLOOR) continue;
 
-                // Расширение узких вертикальных коридоров (стены слева и справа)
-                if (chunk[y][x-1] === WALL && chunk[y][x+1] === WALL) {
-                    // Определяем, является ли (x,y) частью вертикального коридора (сверху или снизу тоже FLOOR)
-                    const upFloor = (chunk[y-1] && chunk[y-1][x] === FLOOR);
-                    const downFloor = (chunk[y+1] && chunk[y+1][x] === FLOOR);
-                    if (upFloor || downFloor) {
-                        // Расширяем вправо (убираем правую стену)
-                        chunk[y][x+1] = FLOOR;
-                    }
-                }
-                // Расширение узких горизонтальных коридоров (стены сверху и снизу)
-                if (chunk[y-1][x] === WALL && chunk[y+1][x] === WALL) {
-                    const leftFloor = (chunk[y][x-1] === FLOOR);
-                    const rightFloor = (chunk[y][x+1] === FLOOR);
-                    if (leftFloor || rightFloor) {
-                        // Расширяем вниз
-                        chunk[y+1][x] = FLOOR;
-                    }
-                }
-            }
-        }
+      // 1) Диагонали
+      if (t[y-1][x-1] === FLOOR && t[y-1][x] === WALL && t[y][x-1] === WALL) {
+        t[y-1][x] = FLOOR;
+      }
+      if (t[y-1][x+1] === FLOOR && t[y-1][x] === WALL && t[y][x+1] === WALL) {
+        t[y-1][x] = FLOOR;
+      }
+      if (t[y+1] && t[y+1][x-1] === FLOOR && t[y][x-1] === WALL && t[y+1][x] === WALL) {
+        t[y][x-1] = FLOOR;
+      }
+      if (t[y+1] && t[y+1][x+1] === FLOOR && t[y][x+1] === WALL && t[y+1][x] === WALL) {
+        t[y][x+1] = FLOOR;
+      }
+
+      // 2) Узкие вертикальные (стены слева/справа)
+      if (t[y][x-1] === WALL && t[y][x+1] === WALL &&
+          ((t[y-1] && t[y-1][x] === FLOOR) || (t[y+1] && t[y+1][x] === FLOOR))) {
+        t[y][x+1] = FLOOR;
+      }
+      // 3) Узкие горизонтальные (стены сверху/снизу)
+      if (t[y-1][x] === WALL && t[y+1][x] === WALL &&
+          (t[y][x-1] === FLOOR || t[y][x+1] === FLOOR)) {
+        t[y+1][x] = FLOOR;
+      }
     }
+  }
 }
 
-// Удаление тупиков путём прорубания выхода к границе
-function removeDeadEnds(chunk, cx, cy) {
-    for (let y = 1; y < HEIGHT-1; y++) {
-        for (let x = 1; x < WIDTH-1; x++) {
-            if (chunk[y][x] === FLOOR) {
-                let wallCount = 0;
-                if (chunk[y-1][x] === WALL) wallCount++;
-                if (chunk[y+1][x] === WALL) wallCount++;
-                if (chunk[y][x-1] === WALL) wallCount++;
-                if (chunk[y][x+1] === WALL) wallCount++;
-                if (wallCount >= 3) {
-                    // Тупик обнаружен
-                    carveExitToBorder(chunk, x, y);
-                }
-            }
-        }
+// ============================================================================
+//  Удаляем все тупики – проламываем прямой туннель до ближайшей границы чанка
+// ============================================================================
+function removeDeadEnds(t) {
+  for (let y = 1; y < CHUNK_H-1; y++) {
+    for (let x = 1; x < CHUNK_W-1; x++) {
+      if (t[y][x] !== FLOOR) continue;
+      let walls = 0;
+      if (t[y-1][x] === WALL) walls++;
+      if (t[y+1][x] === WALL) walls++;
+      if (t[y][x-1] === WALL) walls++;
+      if (t[y][x+1] === WALL) walls++;
+      if (walls >= 3) {
+        // Тупик – прорываем выход к ближайшей границе
+        carveExitToBorder(t, x, y);
+      }
     }
-    // После этого в чанке нет тупиков. Можно также пробить крайние стены,
-    // если хотим гарантированно иметь выходы наружу, но функция carveExitToBorder уже это делает.
+  }
 }
 
-// Прокладывает прямой туннель из данной точки (x,y) до границы чанка
-function carveExitToBorder(chunk, x, y) {
-    // Определяем ближайший край (сверху/снизу или слева/справа)
-    const distLeft = x;
-    const distRight = WIDTH - 1 - x;
-    const distTop = y;
-    const distBottom = HEIGHT - 1 - y;
-    // Находим минимальное расстояние до края
-    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
-    if (minDist === Infinity) return;  // если вдруг точка вне диапазона
-    // Выбираем направление в сторону ближайшего края и роем туннель
-    if (minDist === distLeft) {
-        // роем до левого края
-        for (let nx = x; nx >= 0; nx--) {
-            chunk[y][nx] = FLOOR;
-        }
-    } else if (minDist === distRight) {
-        for (let nx = x; nx < WIDTH; nx++) {
-            chunk[y][nx] = FLOOR;
-        }
-    } else if (minDist === distTop) {
-        for (let ny = y; ny >= 0; ny--) {
-            chunk[ny][x] = FLOOR;
-        }
-    } else if (minDist === distBottom) {
-        for (let ny = y; ny < HEIGHT; ny++) {
-            chunk[ny][x] = FLOOR;
-        }
-    }
+// Прямой коридор к границе чанка
+function carveExitToBorder(t, sx, sy) {
+  const dl = sx, dr = CHUNK_W-1 - sx;
+  const dt = sy, db = CHUNK_H-1 - sy;
+  const minDist = Math.min(dl, dr, dt, db);
+  if (minDist === dl) {
+    for (let x = sx; x >= 0; x--) t[sy][x] = FLOOR;
+  } else if (minDist === dr) {
+    for (let x = sx; x < CHUNK_W; x++) t[sy][x] = FLOOR;
+  } else if (minDist === dt) {
+    for (let y = sy; y >= 0; y--) t[y][sx] = FLOOR;
+  } else {
+    for (let y = sy; y < CHUNK_H; y++) t[y][sx] = FLOOR;
+  }
 }
+
+// ============================================================================
+//  Извлекаем все «выходы» на границах чанка, чтобы при генерации соседей
+//  мы могли проделать ответный коридор.
+//  Возвращает объект:
+//    { north: [{x}], south: [...], west: [...], east: [...] }
+// ============================================================================
+function extractBorderExits(t) {
+  const exits = { north:[], south:[], west:[], east:[] };
+  // Север/юг
+  for (let x = 1; x < CHUNK_W-1; x++) {
+    if (t[0][x] === FLOOR) exits.north.push({ x, y:0 });
+    if (t[CHUNK_H-1][x] === FLOOR) exits.south.push({ x, y:CHUNK_H-1 });
+  }
+  // Запад/восток
+  for (let y = 1; y < CHUNK_H-1; y++) {
+    if (t[y][0] === FLOOR) exits.west.push({ x:0, y });
+    if (t[y][CHUNK_W-1] === FLOOR) exits.east.push({ x:CHUNK_W-1, y });
+  }
+  return exits;
+}
+
+// ============================================================================
+//  «Ленивая» загрузка чанка: если ещё не было – генерируем.
+// ============================================================================
+function ensureChunk(cx, cy) {
+  const key = `${cx},${cy}`;
+  if (!worldChunks.has(key)) {
+    generateChunk(cx, cy);
+    // После генерации соединяем ответные переходы с соседями
+    connectChunkToNeighbors(cx, cy);
+  }
+}
+
+// Соединяем границы чанка (cx,cy) с уже загруженными соседями
+function connectChunkToNeighbors(cx, cy) {
+  const key   = `${cx},${cy}`;
+  const chunk = worldChunks.get(key);
+  const dirs  = [
+    { dx:  0, dy:-1, side:'north', opp:'south' },
+    { dx:  0, dy:+1, side:'south', opp:'north' },
+    { dx:-1, dy: 0, side:'west',  opp:'east'  },
+    { dx:+1, dy: 0, side:'east',  opp:'west'  }
+  ];
+  for (const {dx,dy,side,opp} of dirs) {
+    const neighKey = `${cx+dx},${cy+dy}`;
+    if (!worldChunks.has(neighKey)) continue;
+    const nch = worldChunks.get(neighKey);
+    // В chunk.exits[side] – список клеток на границе, где есть выход
+    for (const pos of chunk.exits[side]) {
+      // Прорезаем в соседнем чанке ответный коридор на opp-стороне
+      // pos.x,pos.y – координаты на своей стороне
+      let nx = pos.x + (dx* (side==='west'?0: side==='east'?0:0));
+      let ny = pos.y + (dy* (side==='north'?0: side==='south'?0:0));
+      // но проще: берем из nch.exits[opp] и тоже прорезаем
+      for (const np of nch.exits[opp]) {
+        nch.tiles[np.y][np.x] = FLOOR;
+      }
+    }
+  }
+}
+
+// ============================================================================
+//  Проверка коллизии: вызывает ensureChunk по необходимости
+// ============================================================================
+function isWall(globalX, globalY) {
+  if (globalX < 0 || globalY < 0) return true;
+  const cx = Math.floor(globalX / CHUNK_W);
+  const cy = Math.floor(globalY / CHUNK_H);
+  ensureChunk(cx, cy);
+  const lx = ((globalX % CHUNK_W) + CHUNK_W) % CHUNK_W;
+  const ly = ((globalY % CHUNK_H) + CHUNK_H) % CHUNK_H;
+  return worldChunks.get(`${cx},${cy}`).tiles[ly][lx] === WALL;
+}
+
+// ============================================================================
+//  МЕХАНИКА «ЗАБЫВАНИЯ» и повторной генерации: per-chunk regen
+//  При каждом забывании (memoryAlpha→0) мы собираем чанки в Set
+//  и через throttle вызываем эту функцию.
+// ============================================================================
+function regenerateChunksPreserveFOV(chunksSet, computeFOV, player) {
+  for (const key of chunksSet) {
+    const [cx, cy] = key.split(',').map(Number);
+
+    // 1) сохраняем FOV-тайлы
+    const vis     = computeFOV(player);
+    const saved   = [];
+    for (const k of vis) {
+      const [gx, gy] = k.split(',').map(Number);
+      if (Math.floor(gx/CHUNK_W)===cx && Math.floor(gy/CHUNK_H)===cy) {
+        const localX = ((gx % CHUNK_W)+CHUNK_W)%CHUNK_W;
+        const localY = ((gy % CHUNK_H)+CHUNK_H)%CHUNK_H;
+        const tile   = worldChunks.get(key).tiles[localY][localX];
+        saved.push({ gx, gy, type: tile });
+      }
+    }
+
+    // 2) Полная новая генерация чанка (вызывает generateChunk → bump regenCount)
+    worldChunks.delete(key);
+    generateChunk(cx, cy);
+
+    // 3) Патчим все ранее забытые тайлы (memoryAlpha===0) — они уже новые
+    //    и сбрасываем visited (реализуется в game.js при рендере)
+    //    (реализация хранения memoryAlpha и visited — в game.js)
+
+    // 4) Восстанавливаем FOV-тайлы
+    const chunk = worldChunks.get(key);
+    for (const s of saved) {
+      const lx = ((s.gx % CHUNK_W)+CHUNK_W)%CHUNK_W;
+      const ly = ((s.gy % CHUNK_H)+CHUNK_H)%CHUNK_H;
+      chunk.tiles[ly][lx] = s.type;
+      // и далее в game.js при рендере установим memoryAlpha=1, visited=true
+    }
+  }
+}
+
+export {
+  ensureChunk,
+  isWall,
+  regenerateChunksPreserveFOV,
+  CHUNK_W,
+  CHUNK_H,
+  worldChunks
+};
