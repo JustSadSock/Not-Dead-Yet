@@ -2,11 +2,9 @@
 
 class GameMap {
   /**
-   * @param cols  — общее число тайлов по X (можно большое, например 1000)
-   * @param rows  — общее число тайлов по Y
-   * @param renderW — ширина чанка (в тайлах), например 30
-   * @param renderH — высота чанка (в тайлах), например 30
-   * @param tileSize — пикселей на тайл (только для справки)
+   * cols×rows — общий размер мира в тайлах,
+   * renderW×renderH — размер чанка (видимой области) в тайлах,
+   * tileSize — пикселей на тайл (для справки).
    */
   constructor(cols = 300, rows = 300, renderW = 30, renderH = 30, tileSize = 100) {
     this.cols     = cols;
@@ -15,17 +13,17 @@ class GameMap {
     this.renderH  = renderH;
     this.tileSize = tileSize;
 
-    // Массив тайлов: заполним пустыми стенами, но чанки ещё не «рабочие»
+    // 1) Инициализируем всю карту стенами + memoryAlpha=0
     this.tiles = Array.from({ length: rows }, () =>
       Array.from({ length: cols }, () => ({ type: 'wall', memoryAlpha: 0 }))
     );
 
-    // Мирозданческий seed
+    // 2) Для детерминированной генерации чанков
     this.worldSeed       = Math.floor(Math.random() * 0xFFFFFFFF);
-    // Счётчик регенераций чанков
-    this.chunkRegenCount = {};   // ключ "cx,cy" → число вызовов generateChunk
+    this.chunkRegenCount = {};             // сколько раз регенерился каждый чанк
+    this.generatedChunks = new Set();      // какие чанки уже сделаны
 
-    // Mulberry32-фабрика
+    // 3) Простой Mulberry32
     this._makeMulberry = seed => {
       let t = seed >>> 0;
       return () => {
@@ -36,15 +34,12 @@ class GameMap {
       };
     };
 
-    // Множество сгенерированных чанков
-    this.generatedChunks = new Set();
-
-    // Генерируем чанк с координатами, где стартует игрок (0,0)
+    // 4) Сразу формируем стартовый чанк (0,0)
     this.ensureChunk(0, 0);
   }
 
   /**
-   * Проверка, сгенерирован ли чанк (cx,cy) — если нет, вызываем generateChunk.
+   * Убедиться, что чанк (cx,cy) сгенерирован.
    */
   ensureChunk(cx, cy) {
     const key = `${cx},${cy}`;
@@ -55,24 +50,23 @@ class GameMap {
   }
 
   /**
-   * Генерация или перегенерация чанка (cx, cy):
-   * создаём 3–5 комнат и широкие (2-тайловые) коридоры между ними.
+   * Полная (re)генерация чанка (cx,cy):
+   * — 3–5 комнат
+   * — широкие (2-тайловые) коридоры между ними
+   * — двери на каждом из 4 краёв чанка, прорубаем и в соседях
    */
   generateChunk(cx, cy) {
-    // счётчик регенераций
     const key   = `${cx},${cy}`;
     const count = (this.chunkRegenCount[key] || 0) + 1;
     this.chunkRegenCount[key] = count;
 
-    // детерминированный seed для этого чанка
     const seed = this.worldSeed ^ (cx * 0x9249249) ^ (cy << 16) ^ count;
     const rng  = this._makeMulberry(seed);
 
-    // абсолютные координаты чанка в тайлах
     const x0 = cx * this.renderW;
     const y0 = cy * this.renderH;
 
-    // 1) Сброс всего чанка в «стену» + сброс memoryAlpha
+    // 1) Заливаем весь чанк «стеной»
     for (let y = y0; y < y0 + this.renderH; y++) {
       if (y < 0 || y >= this.rows) continue;
       for (let x = x0; x < x0 + this.renderW; x++) {
@@ -81,7 +75,7 @@ class GameMap {
       }
     }
 
-    // 2) Сгенерировать 3–5 комнат
+    // 2) Внутренние комнаты
     const rooms = [];
     const roomCount = 3 + Math.floor(rng() * 3);
     for (let i = 0; i < roomCount; i++) {
@@ -90,8 +84,6 @@ class GameMap {
       const rx = x0 + Math.floor(rng() * (this.renderW - w));
       const ry = y0 + Math.floor(rng() * (this.renderH - h));
       rooms.push({ rx, ry, w, h });
-
-      // чистим пол
       for (let yy = ry; yy < ry + h; yy++) {
         for (let xx = rx; xx < rx + w; xx++) {
           if (yy >= 0 && yy < this.rows && xx >= 0 && xx < this.cols) {
@@ -101,38 +93,76 @@ class GameMap {
       }
     }
 
-    // 3) Соединяем комнаты 2-тайловыми коридорами
+    // 3) Коридоры между внутренними комнатами
     for (let i = 1; i < rooms.length; i++) {
       const A = rooms[i - 1], B = rooms[i];
-      const ax = Math.floor(A.rx + A.w / 2),
-            ay = Math.floor(A.ry + A.h / 2);
-      const bx = Math.floor(B.rx + B.w / 2),
-            by = Math.floor(B.ry + B.h / 2);
+      const ax = Math.floor(A.rx + A.w/2),
+            ay = Math.floor(A.ry + A.h/2);
+      const bx = Math.floor(B.rx + B.w/2),
+            by = Math.floor(B.ry + B.h/2);
 
-      // горизонтальный сегмент
+      // горизонтальный участок
       for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) {
         for (let dy = 0; dy < 2; dy++) {
           const y = ay + dy;
-          if (y >= 0 && y < this.rows && x >= 0 && x < this.cols) {
+          if (y>=0 && y<this.rows && x>=0 && x<this.cols) {
             this.tiles[y][x].type = 'floor';
           }
         }
       }
-      // вертикальный сегмент
+      // вертикальный участок
       for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) {
         for (let dx = 0; dx < 2; dx++) {
           const x = bx + dx;
-          if (y >= 0 && y < this.rows && x >= 0 && x < this.cols) {
+          if (y>=0 && y<this.rows && x>=0 && x<this.cols) {
             this.tiles[y][x].type = 'floor';
           }
         }
       }
     }
+
+    // 4) Двери на границе чанка: N, S, W, E
+    //    — для каждой стороны берём одно рандомное место
+    const doorN = y0,
+          doorS = y0 + this.renderH - 1,
+          doorWx = x0,
+          doorEx = x0 + this.renderW - 1;
+    const pickX = () => x0 + Math.floor(rng() * this.renderW);
+    const pickY = () => y0 + Math.floor(rng() * this.renderH);
+
+    // север (и соседняя граница в chunk(cx,cy-1))
+    {
+      const dx = pickX(), dy = doorN;
+      this.tiles[dy][dx].type = 'floor';
+      this.ensureChunk(cx, cy-1);
+      this.tiles[dy - 1]?.[dx] && (this.tiles[dy - 1][dx].type = 'floor');
+    }
+    // юг
+    {
+      const dx = pickX(), dy = doorS;
+      this.tiles[dy][dx].type = 'floor';
+      this.ensureChunk(cx, cy+1);
+      this.tiles[dy + 1]?.[dx] && (this.tiles[dy + 1][dx].type = 'floor');
+    }
+    // запад
+    {
+      const dy = pickY(), dx = doorWx;
+      this.tiles[dy][dx].type = 'floor';
+      this.ensureChunk(cx-1, cy);
+      this.tiles[dy]?.[dx - 1] && (this.tiles[dy][dx - 1].type = 'floor');
+    }
+    // восток
+    {
+      const dy = pickY(), dx = doorEx;
+      this.tiles[dy][dx].type = 'floor';
+      this.ensureChunk(cx+1, cy);
+      this.tiles[dy]?.[dx + 1] && (this.tiles[dy][dx + 1].type = 'floor');
+    }
   }
 
   /**
-   * Коллизия: true, если (x,y) стена или вне границ.
-   * При обращении к новому чанку автоматически его создаём.
+   * true, если (x,y) стена или вне мира.
+   * Вызывает генерацию нужного чанка по координатам.
    */
   isWall(x, y) {
     const cx = Math.floor(x / this.renderW);
@@ -143,25 +173,22 @@ class GameMap {
   }
 
   /**
-   * Когда тайл (x,y) «забывается» (memoryAlpha → 0),
-   * перегенерируем чанк, где он лежит, за исключением чанка
-   * с игроком — в нём мы просто сбросим memoryAlpha у этого тайла.
+   * Вызывается, когда память о тайле (x,y) окончательно потускнела.
+   * Если это тайл в чанке игрока — просто сброс memoryAlpha.
+   * Иначе — полная регенерация этого чанка.
    */
   regenerateTile(x, y) {
-    const cx = Math.floor(x / this.renderW);
-    const cy = Math.floor(y / this.renderH);
-
-    // если игрок в том же чанке — не трогаем структуру, только память
+    const cx = Math.floor(x / this.renderW),
+          cy = Math.floor(y / this.renderH);
     if (window.player) {
-      const pcx = Math.floor(window.player.x / this.renderW);
-      const pcy = Math.floor(window.player.y / this.renderH);
+      const pcx = Math.floor(window.player.x / this.renderW),
+            pcy = Math.floor(window.player.y / this.renderH);
       if (pcx === cx && pcy === cy) {
         this.tiles[y][x].memoryAlpha = 0;
         return;
       }
     }
-
-    // иначе полностью пересоздаём чанк
+    // иначе: пересоздаём чанк целиком
     this.generateChunk(cx, cy);
   }
 }
