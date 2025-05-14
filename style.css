@@ -33,9 +33,10 @@ html, body {
 }
 
 /* 3) Джойстик: чуть выше, с учётом safe-area-inset */
+/* Джойстик: поднят в два раза выше (раньше было 20px, теперь 40px) */
 #joystickBase {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 20px) + 20px);
+  bottom: calc(env(safe-area-inset-bottom, 20px) + 40px);
   left: 50%;
   transform: translateX(-50%);
   width: 80px;
