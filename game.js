@@ -24,8 +24,8 @@ window.addEventListener('resize', updateViewport);
 updateViewport();
 
 // ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };
-window.keyVector   = { x: 0, y: 0 };
+window.inputVector = { x: 0, y: 0 };  // тач-джойстик
+window.keyVector   = { x: 0, y: 0 };  // клавиатура WASD/стрелки
 
 window.addEventListener('keydown', e => {
   switch (e.key) {
@@ -56,7 +56,6 @@ function computeFOV(map, player) {
     const angle = player.directionAngle - halfFOV + (i / rays) * fullFOV;
     const dx = Math.cos(angle), dy = Math.sin(angle);
     let dist = 0;
-
     while (dist < maxR) {
       const fx = player.x + dx * dist;
       const fy = player.y + dy * dist;
@@ -64,13 +63,11 @@ function computeFOV(map, player) {
 
       map.ensureChunk(Math.floor(ix / RENDER_W), Math.floor(iy / RENDER_H));
       if (ix < 0 || iy < 0 || ix >= map.cols || iy >= map.rows) break;
-
       visible.add(`${ix},${iy}`);
       if (map.tiles[iy][ix].type === 'wall') break;
       dist += 0.2;
     }
   }
-
   return visible;
 }
 
@@ -83,7 +80,6 @@ class Monster {
     this.visibleTimer = 0;
     this.dead = false;
   }
-
   update(dt, visible) {
     const key = `${Math.floor(this.x)},${Math.floor(this.y)}`;
     const inView = visible.has(key);
@@ -91,7 +87,6 @@ class Monster {
     this.visibleTimer = inView ? this.visibleTimer + dt : 0;
     if (!this.real && this.timer > 5) this.dead = true;
   }
-
   draw(ctx) {
     const px = (this.x + 0.5) * TILE_SIZE;
     const py = (this.y + 0.5) * TILE_SIZE;
@@ -116,15 +111,10 @@ class Monster {
 }
 
 // ========== MAP & SPAWN ==========
-window.gameMap = new GameMap(
-  300,  // cols total
-  300,  // rows total
-  RENDER_W,
-  RENDER_H,
-  TILE_SIZE
-);
+window.gameMap = new GameMap(300, 300, RENDER_W, RENDER_H, TILE_SIZE);
 const gameMap = window.gameMap;
 
+// generate initial chunk and collect floor tiles for spawn
 gameMap.ensureChunk(0, 0);
 const spawnList = [];
 for (let y = 0; y < RENDER_H; y++) {
@@ -139,6 +129,7 @@ const start = spawnList.length
 window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
 const player = window.player;
 
+// spawn monsters periodically
 window.monsters = [];
 const monsters = window.monsters;
 setInterval(() => {
@@ -158,24 +149,24 @@ function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) INPUT & DIRECTION
+  // 1) INPUT & ROTATION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
   if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
 
-  // 2) MOVE & COLLISION
+  // 2) MOVE WITH COLLISION
   const nx = player.x + iv.x * SPEED * dt;
   const ny = player.y + iv.y * SPEED * dt;
   if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
     player.x = nx; player.y = ny;
   }
 
-  // 3) COMPUTE FOV & MARK VISITED
+  // 3) COMPUTE FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) MEMORY FADE & COLLECT CHUNKS TO REGEN
+  // 4) MEMORY FADE, VISITED EXPANSION & CHUNK COLLECTION
   const chunksToRegen = new Set();
 
   for (let y = 0; y < gameMap.rows; y++) {
@@ -183,12 +174,19 @@ function gameLoop(now = performance.now()) {
       const tile = gameMap.tiles[y][x];
       const key  = `${x},${y}`;
       if (visible.has(key)) {
+        // mark self and neighbors as visited
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (ny >= 0 && ny < gameMap.rows && nx >= 0 && nx < gameMap.cols) {
+              gameMap.tiles[ny][nx].visited = true;
+            }
+          }
+        }
         tile.memoryAlpha = 1;
-        tile.visited     = true;
       } else if (tile.memoryAlpha > 0) {
         tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
         if (tile.memoryAlpha === 0 && tile.visited) {
-          // schedule this chunk for one regen
           const cx = Math.floor(x / RENDER_W),
                 cy = Math.floor(y / RENDER_H);
           chunksToRegen.add(`${cx},${cy}`);
@@ -197,12 +195,11 @@ function gameLoop(now = performance.now()) {
     }
   }
 
-  // perform one regen per affected chunk
-  for (let chunkKey of chunksToRegen) {
-    const [cx, cy] = chunkKey.split(',').map(Number);
-    // regenerate exactly once per chunk
+  // perform one regeneration per chunk
+  chunksToRegen.forEach(key => {
+    const [cx, cy] = key.split(',').map(Number);
     gameMap.regenerateTile(cx * RENDER_W, cy * RENDER_H);
-  }
+  });
 
   // 5) UPDATE & CLEAN MONSTERS
   monsters.forEach(m => m.update(dt, visible));
@@ -215,6 +212,7 @@ function gameLoop(now = performance.now()) {
   const endX   = Math.ceil(camX + RENDER_W),
         endY   = Math.ceil(camY + RENDER_H);
 
+  // ensure neighbor chunks exist
   for (let cy = Math.floor(startY/RENDER_H); cy <= Math.floor((endY-1)/RENDER_H); cy++) {
     for (let cx = Math.floor(startX/RENDER_W); cx <= Math.floor((endX-1)/RENDER_W); cx++) {
       gameMap.ensureChunk(cx, cy);
@@ -227,9 +225,9 @@ function gameLoop(now = performance.now()) {
 
   // draw tiles
   for (let y = startY; y < endY; y++) {
-    if (y<0||y>=gameMap.rows) continue;
+    if (y < 0 || y >= gameMap.rows) continue;
     for (let x = startX; x < endX; x++) {
-      if (x<0||x>=gameMap.cols) continue;
+      if (x < 0 || x >= gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
       ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
