@@ -1,54 +1,48 @@
 // game.js
 
-// ========== DYNAMIC VIEWPORT SETUP ==========
-const BASE_RENDER_W = 15;  // we want ~15 tiles across
-let RENDER_W, RENDER_H, TILE_SIZE;
+// ========== CONSTANTS ==========
+const TILE_SIZE  = 100;   // fixed pixels per tile
+const SPEED      = 3;     // tiles per second
+const FOG_FADE   = 0.5;   // memory alpha decay per second
 
+// ========== DYNAMIC VIEWPORT ==========
+let RENDER_W, RENDER_H;
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
-function resizeViewport() {
-  // fill the screen
-  const cw = window.innerWidth;
-  const ch = window.innerHeight;
-  canvas.width  = cw;
-  canvas.height = ch;
-
-  // compute tile size so we get exactly BASE_RENDER_W columns
-  TILE_SIZE = Math.floor(cw / BASE_RENDER_W);
-  RENDER_W  = BASE_RENDER_W;
-  // compute how many rows we need to fill the height
-  RENDER_H  = Math.ceil(ch / TILE_SIZE);
+function updateViewport() {
+  // compute how many whole tiles fit horizontally/vertically
+  RENDER_W = Math.floor(window.innerWidth  / TILE_SIZE);
+  RENDER_H = Math.floor(window.innerHeight / TILE_SIZE);
+  // resize internal canvas resolution
+  canvas.width  = RENDER_W * TILE_SIZE;
+  canvas.height = RENDER_H * TILE_SIZE;
 }
-window.addEventListener('resize', resizeViewport);
-resizeViewport();  // initial setup
-
-// ========== CONSTANTS ==========
-const SPEED    = 3;    // tiles / second
-const FOG_FADE = 0.5;  // alpha / second
+window.addEventListener('resize', updateViewport);
+updateViewport();
 
 // ========== INPUT STATE ==========
-window.inputVector = { x: 0, y: 0 };
-window.keyVector   = { x: 0, y: 0 };
+window.inputVector = { x: 0, y: 0 };  // touch joystick
+window.keyVector   = { x: 0, y: 0 };  // keyboard
 
 window.addEventListener('keydown', e => {
   switch (e.key) {
-    case 'ArrowUp': case 'w': window.keyVector.y = -1; break;
-    case 'ArrowDown': case 's': window.keyVector.y = +1; break;
-    case 'ArrowLeft': case 'a': window.keyVector.x = -1; break;
+    case 'ArrowUp': case 'w':    window.keyVector.y = -1; break;
+    case 'ArrowDown': case 's':  window.keyVector.y = +1; break;
+    case 'ArrowLeft': case 'a':  window.keyVector.x = -1; break;
     case 'ArrowRight': case 'd': window.keyVector.x = +1; break;
   }
 });
 window.addEventListener('keyup', e => {
   switch (e.key) {
-    case 'ArrowUp': case 'w': window.keyVector.y = 0; break;
-    case 'ArrowDown': case 's': window.keyVector.y = 0; break;
-    case 'ArrowLeft': case 'a': window.keyVector.x = 0; break;
+    case 'ArrowUp': case 'w':    window.keyVector.y = 0; break;
+    case 'ArrowDown': case 's':  window.keyVector.y = 0; break;
+    case 'ArrowLeft': case 'a':  window.keyVector.x = 0; break;
     case 'ArrowRight': case 'd': window.keyVector.x = 0; break;
   }
 });
 
-// ========== FOV (ray‐casting) ==========
+// ========== FOV (ray-casting) ==========
 function computeFOV(map, player) {
   const visible = new Set();
   const maxR    = 10;
@@ -61,8 +55,10 @@ function computeFOV(map, player) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
     let dist = 0;
     while (dist < maxR) {
-      const fx = player.x + dx * dist, fy = player.y + dy * dist;
-      const ix = Math.floor(fx), iy = Math.floor(fy);
+      const fx = player.x + dx * dist;
+      const fy = player.y + dy * dist;
+      const ix = Math.floor(fx);
+      const iy = Math.floor(fy);
       map.ensureChunk(Math.floor(ix / RENDER_W), Math.floor(iy / RENDER_H));
       if (ix < 0 || iy < 0 || ix >= map.cols || iy >= map.rows) break;
       visible.add(`${ix},${iy}`);
@@ -75,9 +71,8 @@ function computeFOV(map, player) {
 
 // ========== MONSTER CLASS ==========
 class Monster {
-  constructor(x, y, real = true) {
-    this.x = x;
-    this.y = y;
+  constructor(x, y, real=true) {
+    this.x = x; this.y = y;
     this.real = real;
     this.timer = 0;
     this.visibleTimer = 0;
@@ -91,7 +86,8 @@ class Monster {
     if (!this.real && this.timer > 5) this.dead = true;
   }
   draw(ctx) {
-    const px = (this.x + 0.5) * TILE_SIZE, py = (this.y + 0.5) * TILE_SIZE;
+    const px = (this.x + 0.5) * TILE_SIZE;
+    const py = (this.y + 0.5) * TILE_SIZE;
     if (this.timer < 0.2) {
       ctx.save();
       ctx.globalAlpha = this.real ? 0.5 : 0.2;
@@ -114,9 +110,10 @@ class Monster {
 
 // ========== MAP & SPAWN ==========
 window.gameMap = new GameMap(300, 300, RENDER_W, RENDER_H, TILE_SIZE);
-const gameMap  = window.gameMap;
+const gameMap   = window.gameMap;
 gameMap.ensureChunk(0, 0);
 
+// find floor tiles in initial viewport for spawning
 const spawnList = [];
 for (let y = 0; y < RENDER_H; y++) {
   for (let x = 0; x < RENDER_W; x++) {
@@ -127,13 +124,10 @@ const start = spawnList.length
   ? spawnList[Math.floor(Math.random() * spawnList.length)]
   : { x: Math.floor(RENDER_W/2), y: Math.floor(RENDER_H/2) };
 
-window.player = {
-  x: start.x + 0.5,
-  y: start.y + 0.5,
-  directionAngle: 0
-};
+window.player = { x: start.x + 0.5, y: start.y + 0.5, directionAngle: 0 };
 const player = window.player;
 
+// ========== MONSTERS LIST & SPAWN ==========
 window.monsters = [];
 const monsters   = window.monsters;
 setInterval(() => {
@@ -147,23 +141,22 @@ setInterval(() => {
   monsters.push(new Monster(x, y, Math.random() < 0.3));
 }, 2000);
 
-// ========== DELTA-TIME ==========
+// ========== GAME LOOP ==========
 let lastTime = performance.now();
-
-// ========== MAIN LOOP ==========
 function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) INPUT + DIRECTION
+  // 1) INPUT & DIRECTION
   const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
   if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
 
-  // 2) MOVE + COLLISION
-  const nx = player.x + iv.x * SPEED * dt, ny = player.y + iv.y * SPEED * dt;
+  // 2) MOVE & COLLIDE
+  const nx = player.x + iv.x * SPEED * dt;
+  const ny = player.y + iv.y * SPEED * dt;
   if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
     player.x = nx; player.y = ny;
   }
@@ -171,13 +164,13 @@ function gameLoop(now = performance.now()) {
   // 3) FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) MEMORY + REGEN
+  // 4) MEMORY & REGEN
   for (let key of gameMap.generatedChunks) {
     const [cx, cy] = key.split(',').map(Number);
     const x0 = cx * RENDER_W, y0 = cy * RENDER_H;
     for (let y = y0; y < y0 + RENDER_H; y++) {
       for (let x = x0; x < x0 + RENDER_W; x++) {
-        if (x<0||y<0||x>=gameMap.cols||y>=gameMap.rows) continue;
+        if (x < 0 || y < 0 || x >= gameMap.cols || y >= gameMap.rows) continue;
         const tile = gameMap.tiles[y][x], k = `${x},${y}`;
         if (visible.has(k)) {
           tile.memoryAlpha = 1;
@@ -189,17 +182,17 @@ function gameLoop(now = performance.now()) {
     }
   }
 
-  // 5) MONSTERS
+  // 5) UPDATE & CLEAN MONSTERS
   monsters.forEach(m => m.update(dt, visible));
   window.monsters = monsters.filter(m => !m.dead);
 
   // 6) RENDER
-  const camX = player.x - RENDER_W/2, camY = player.y - RENDER_H/2;
-  const startX = Math.floor(camX), startY = Math.floor(camY),
-        endX   = Math.ceil(camX + RENDER_W),
-        endY   = Math.ceil(camY + RENDER_H);
+  const camX = player.x - RENDER_W/2;
+  const camY = player.y - RENDER_H/2;
+  const startX = Math.floor(camX), startY = Math.floor(camY);
+  const endX   = Math.ceil(camX + RENDER_W), endY = Math.ceil(camY + RENDER_H);
 
-  // generate needed chunks
+  // ensure needed chunks
   for (let cy = Math.floor(startY/RENDER_H); cy <= Math.floor((endY-1)/RENDER_H); cy++) {
     for (let cx = Math.floor(startX/RENDER_W); cx <= Math.floor((endX-1)/RENDER_W); cx++) {
       gameMap.ensureChunk(cx, cy);
