@@ -1,11 +1,11 @@
 // game.js
 
 // ========== КОНСТАНТЫ ==========
-const RENDER_W       = 30,    // размеры «камера» в тайлах
-      RENDER_H       = 30,
-      TILE_SIZE      = 100,   // пикселей на тайл (приближение)
-      SPEED          = 3,     // тайлов в секунду
-      FOG_FADE       = 0.5;   // скорость тускнения (альфа/сек)
+const RENDER_W       = 30;    // ширина области в тайлах
+const RENDER_H       = 30;    // высота области в тайлах
+const TILE_SIZE      = 100;   // пикселей на один тайл
+const SPEED          = 3;     // тайлов в секунду
+const FOG_FADE       = 0.5;   // скорость тускнения (альфа/сек)
 
 // ========== CANVAS ==========
 const canvas = document.getElementById('gameCanvas');
@@ -29,37 +29,42 @@ function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) Читаем вектор от джойстика
+  // --- 1) Читаем ввод с джойстика и обновляем направление ---
   const iv = window.inputVector || { x: 0, y: 0 };
-
-  // 2) Обновляем направление взгляда, если есть движение
   if (iv.x !== 0 || iv.y !== 0) {
     player.directionAngle = Math.atan2(iv.y, iv.x);
   }
 
-  // 3) Плавное движение с коллизиями
+  // --- 2) Плавное движение с учётом коллизий ---
   let nx = player.x + iv.x * SPEED * dt;
   let ny = player.y + iv.y * SPEED * dt;
-
-  // проверяем по X
   if (!gameMap.isWall(Math.floor(nx), Math.floor(player.y))) {
     player.x = nx;
   }
-  // по Y
   if (!gameMap.isWall(Math.floor(player.x), Math.floor(ny))) {
     player.y = ny;
   }
 
-  // 4) Считаем новое поле зрения
+  // --- 3) Считаем поле зрения из текущей позиции ---
   const visible = computeFOV(gameMap, {
     x: player.x,
     y: player.y,
     directionAngle: player.directionAngle
   });
 
-  // 5) Обновляем memoryAlpha и перегенерируем «забытые» тайлы
-  for (let y = 0; y < gameMap.rows; y++) {
-    for (let x = 0; x < gameMap.cols; x++) {
+  // --- 4) Вычисляем границы области, которую рисуем и обновляем ---
+  const camX   = player.x - RENDER_W / 2;
+  const camY   = player.y - RENDER_H / 2;
+  const startX = Math.floor(camX);
+  const startY = Math.floor(camY);
+  const endX   = Math.ceil(camX + RENDER_W);
+  const endY   = Math.ceil(camY + RENDER_H);
+
+  // --- 5) Обновляем memoryAlpha и перегенерируем забытые тайлы только в этой области ---
+  for (let y = startY; y < endY; y++) {
+    if (y < 0 || y >= gameMap.rows) continue;
+    for (let x = startX; x < endX; x++) {
+      if (x < 0 || x >= gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       const key  = `${x},${y}`;
       if (visible.has(key)) {
@@ -73,36 +78,35 @@ function gameLoop(now = performance.now()) {
     }
   }
 
-  // 6) Обновляем и очищаем монстров
+  // --- 6) Обновляем и очищаем монстров ---
   window.monsters.forEach(m => m.update(dt, visible));
   window.monsters = window.monsters.filter(m => !m.dead);
 
-  // 7) Отрисовка: камера всегда центрирована на игроке
-  const camX = player.x - RENDER_W / 2;
-  const camY = player.y - RENDER_H / 2;
-
+  // --- 7) ОЧИСТКА И ПОДГОТОВКА К ОТРИСОВКЕ ---
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
+  // Сдвигаем систему координат, чтобы «камера» следовала за игроком
   ctx.translate(-camX * TILE_SIZE, -camY * TILE_SIZE);
 
-  // — тайлы
-  const startX = Math.floor(camX), endX = Math.ceil(camX + RENDER_W);
-  const startY = Math.floor(camY), endY = Math.ceil(camY + RENDER_H);
-  for (let yy = startY; yy < endY; yy++) {
-    for (let xx = startX; xx < endX; xx++) {
-      if (xx < 0 || yy < 0 || xx >= gameMap.cols || yy >= gameMap.rows) continue;
-      const tile = gameMap.tiles[yy][xx];
+  // --- 8) ОТРИСОВКА ТАЙЛОВ В ОБЛАСТИ ---
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      if (x < 0 || y < 0 || x >= gameMap.cols || y >= gameMap.rows) continue;
+      const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
       ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
-      ctx.fillRect(xx * TILE_SIZE, yy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
   ctx.globalAlpha = 1;
 
-  // — монстры
-  window.monsters.forEach(m => m.draw(ctx));
+  // --- 9) ОТРИСОВКА МОНСТРОВ ---
+  window.monsters.forEach(m => {
+    // draw(ctx) уже рисует монстра относительно абсолютных координат
+    m.draw(ctx);
+  });
 
-  // — игрок
+  // --- 10) ОТРИСОВКА ИГРОКА ---
   const px = (player.x + 0.5) * TILE_SIZE;
   const py = (player.y + 0.5) * TILE_SIZE;
   ctx.fillStyle = 'red';
