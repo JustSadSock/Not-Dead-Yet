@@ -2,8 +2,8 @@
 
 class GameMap {
   /**
-   * cols×rows — общий размер “бесконечного” мира,
-   * renderW×renderH — размер области вокруг игрока (30×30),
+   * cols×rows — общий размер мира,
+   * renderW×renderH — размер «чунка» (30×30),
    * tileSize — пикселей на тайл (для справки).
    */
   constructor(
@@ -19,108 +19,124 @@ class GameMap {
     this.renderH  = renderH;
     this.tileSize = tileSize;
 
-    // Основной массив тайлов
     // tiles[y][x] = { type: 'wall'|'floor', memoryAlpha: 0…1 }
     this.tiles = [];
-    // После первичной генерации сюда скопируем только типы
-    this._original = [];
 
-    // Для layout
-    this.rooms = [];
+    // Для детерминированного PRNG
+    this.worldSeed   = Math.floor(Math.random() * 0xFFFFFFFF);
+    this.chunkSeeds  = {};       // { "cx,cy": counter }
+    this.generatedChunks = new Set();
 
-    this._generateLayout();
+    // Фабрика мульберри-генератора
+    this._makeMulberry = () => {
+      return seed => {
+        let a = seed >>> 0;
+        return () => {
+          a |= 0;
+          a = (a + 0x6D2B79F5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      };
+    };
+    this._mulberry32 = this._makeMulberry();
 
-    // Клонируем начальную структуру в _original
-    for (let y = 0; y < this.rows; y++) {
-      this._original[y] = [];
-      for (let x = 0; x < this.cols; x++) {
-        this._original[y][x] = this.tiles[y][x].type;
-      }
-    }
+    // Сразу генерируем чанк {0,0}
+    this.generateChunk(0, 0);
   }
 
-  /** Первичная генерация: заливаем стенами, создаём комнаты и коридоры */
-  _generateLayout() {
-    // 1) Заливаем все стены
-    for (let y = 0; y < this.rows; y++) {
-      this.tiles[y] = [];
-      for (let x = 0; x < this.cols; x++) {
+  /**
+   * Генерирует или перегенерирует чанк по координатам чанка (cx,cy).
+   * Каждая регенерация даёт новую схему комнат+корридоров в этом блоке.
+   */
+  generateChunk(cx, cy) {
+    const key = `${cx},${cy}`;
+    const count = (this.chunkSeeds[key] || 0) + 1;
+    this.chunkSeeds[key] = count;
+
+    // Детерминированный сид для этого чанка
+    const seed = this.worldSeed ^ (cx * 0x9249249) ^ (cy << 16) ^ count;
+    const rng  = this._mulberry32(seed);
+
+    // Границы чанка в координатах тайлов
+    const x0 = cx * this.renderW;
+    const y0 = cy * this.renderH;
+
+    // Инициализируем тайлы чанка стенами + сбросом памяти
+    for (let y = y0; y < y0 + this.renderH; y++) {
+      if (y < 0 || y >= this.rows) continue;
+      this.tiles[y] = this.tiles[y] || [];
+      for (let x = x0; x < x0 + this.renderW; x++) {
+        if (x < 0 || x >= this.cols) continue;
         this.tiles[y][x] = { type: 'wall', memoryAlpha: 0 };
       }
     }
 
-    // 2) Создаём несколько комнат
-    const roomCount = 8;
-    const roomMin   = 8;
-    const roomMax   = 16;
+    // 1) Рандомно создаём несколько комнат в рамках чанка
+    const rooms = [];
+    const roomCount = 3 + Math.floor(rng() * 3); // 3–5 комнат
     for (let i = 0; i < roomCount; i++) {
-      const w  = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
-      const h  = roomMin + Math.floor(Math.random() * (roomMax - roomMin));
-      const x0 = 1 + Math.floor(Math.random() * (this.cols - w - 2));
-      const y0 = 1 + Math.floor(Math.random() * (this.rows - h - 2));
-      const cx = x0 + Math.floor(w / 2);
-      const cy = y0 + Math.floor(h / 2);
-      this.rooms.push({ x:x0, y:y0, w, h, cx, cy });
+      const w = 4 + Math.floor(rng() * 4); // ширина 4–7
+      const h = 4 + Math.floor(rng() * 4); // высота 4–7
+      const rx = x0 + Math.floor(rng() * (this.renderW - w));
+      const ry = y0 + Math.floor(rng() * (this.renderH - h));
+      rooms.push({ rx, ry, w, h });
 
-      // Чистим пол в комнате
-      for (let yy = y0; yy < y0 + h; yy++) {
-        for (let xx = x0; xx < x0 + w; xx++) {
+      // «Вырубаем» пол внутри комнаты
+      for (let yy = ry; yy < ry + h; yy++) {
+        for (let xx = rx; xx < rx + w; xx++) {
           this.tiles[yy][xx].type = 'floor';
         }
       }
     }
 
-    // 3) Соединяем комнаты широкими коридорами
-    for (let i = 1; i < this.rooms.length; i++) {
-      const prev = this.rooms[i - 1];
-      const cur  = this.rooms[i];
+    // 2) Соединяем комнаты широкими (2-тайловыми) коридорами
+    for (let i = 1; i < rooms.length; i++) {
+      const A = rooms[i - 1], B = rooms[i];
+      const ax = Math.floor(A.rx + A.w / 2), ay = Math.floor(A.ry + A.h / 2);
+      const bx = Math.floor(B.rx + B.w / 2), by = Math.floor(B.ry + B.h / 2);
 
-      // Горизонтальный проход (2 тайла высоты)
-      const x1 = Math.min(prev.cx, cur.cx);
-      const x2 = Math.max(prev.cx, cur.cx);
-      for (let xx = x1; xx <= x2; xx++) {
+      // Горизонтальный сегмент
+      const x1 = Math.min(ax, bx), x2 = Math.max(ax, bx);
+      for (let x = x1; x <= x2; x++) {
         for (let dy = 0; dy < 2; dy++) {
-          const yy = prev.cy + dy;
-          if (this._inBounds(xx, yy)) {
-            this.tiles[yy][xx].type = 'floor';
-          }
+          const y = ay + dy;
+          if (y >= y0 && y < y0 + this.renderH) this.tiles[y][x].type = 'floor';
         }
       }
 
-      // Вертикальный проход (2 тайла ширины)
-      const y1 = Math.min(prev.cy, cur.cy);
-      const y2 = Math.max(prev.cy, cur.cy);
-      for (let yy = y1; yy <= y2; yy++) {
+      // Вертикальный сегмент
+      const y1 = Math.min(ay, by), y2 = Math.max(ay, by);
+      for (let y = y1; y <= y2; y++) {
         for (let dx = 0; dx < 2; dx++) {
-          const xx = cur.cx + dx;
-          if (this._inBounds(xx, yy)) {
-            this.tiles[yy][xx].type = 'floor';
-          }
+          const x = bx + dx;
+          if (x >= x0 && x < x0 + this.renderW) this.tiles[y][x].type = 'floor';
         }
       }
     }
+
+    this.generatedChunks.add(key);
   }
 
-  /** Проверяет, что (x,y) в пределах массива */
+  /** Проверяет, что (x,y) внутри границ карты */
   _inBounds(x, y) {
     return x >= 0 && y >= 0 && x < this.cols && y < this.rows;
   }
 
-  /**
-   * Истинно, если на (x,y) стена или точка вне карты
-   */
+  /** Коллизия: true, если (x,y) стена или за границей */
   isWall(x, y) {
     if (!this._inBounds(x, y)) return true;
     return this.tiles[y][x].type === 'wall';
   }
 
   /**
-   * Перегенерирует «забытый» тайл, возвращая его
-   * к изначальному типу из первичной генерации.
-   * Сбрасывает memoryAlpha.
+   * Вызывается, когда тайл (x,y) «потускнел» и забыт героем:
+   * полностью перегенерируем его чанк, давая новую схему.
    */
   regenerateTile(x, y) {
-    const orig = this._original[y]?.[x] || 'floor';
-    this.tiles[y][x] = { type: orig, memoryAlpha: 0 };
+    const cx = Math.floor(x / this.renderW);
+    const cy = Math.floor(y / this.renderH);
+    this.generateChunk(cx, cy);
   }
 }
