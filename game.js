@@ -1,79 +1,74 @@
 // game.js
 
-// ========== КОНСТАНТЫ ==========
-const RENDER_W   = 30;    // ширина области в тайлах
-const RENDER_H   = 30;    // высота области в тайлах
-const TILE_SIZE  = 100;   // пикселей на тайл
-const SPEED      = 3;     // тайлов в секунду
-const FOG_FADE   = 0.5;   // «память» тускнеет на это за сек
+// ========== КОНСТАНТЫ (zoom ×2) ==========
+const RENDER_W   = 15;     // теперь показываем 15×15 тайлов вместо 30×30
+const RENDER_H   = 15;
+const TILE_SIZE  = 200;    // вместо 100px — 200px на тайл
+const SPEED      = 3;      // тайлов в секунду (без изменений)
+const FOG_FADE   = 0.5;    // «память» тускнеет на 0.5 в секунду
 
 // ========== CANVAS ==========
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
-canvas.width  = RENDER_W * TILE_SIZE;
+canvas.width  = RENDER_W * TILE_SIZE;  // теперь 15*200 = 3000px внутренней резолюции
 canvas.height = RENDER_H * TILE_SIZE;
 
 // ========== ВВОД ==========
-// от джойстика (controls.js)
 window.inputVector = { x: 0, y: 0 };
-// от клавиатуры
 window.keyVector   = { x: 0, y: 0 };
 window.addEventListener('keydown', e => {
-  if (e.key === 'ArrowUp'   || e.key === 'w') window.keyVector.y = -1;
-  if (e.key === 'ArrowDown' || e.key === 's') window.keyVector.y = +1;
-  if (e.key === 'ArrowLeft' || e.key === 'a') window.keyVector.x = -1;
-  if (e.key === 'ArrowRight'|| e.key === 'd') window.keyVector.x = +1;
+  switch (e.key) {
+    case 'ArrowUp': case 'w': window.keyVector.y = -1; break;
+    case 'ArrowDown': case 's': window.keyVector.y = +1; break;
+    case 'ArrowLeft': case 'a': window.keyVector.x = -1; break;
+    case 'ArrowRight': case 'd': window.keyVector.x = +1; break;
+  }
 });
 window.addEventListener('keyup', e => {
-  if (e.key === 'ArrowUp'   || e.key === 'w') window.keyVector.y = 0;
-  if (e.key === 'ArrowDown' || e.key === 's') window.keyVector.y = 0;
-  if (e.key === 'ArrowLeft' || e.key === 'a') window.keyVector.x = 0;
-  if (e.key === 'ArrowRight'|| e.key === 'd') window.keyVector.x = 0;
+  switch (e.key) {
+    case 'ArrowUp': case 'w': window.keyVector.y = 0; break;
+    case 'ArrowDown': case 's': window.keyVector.y = 0; break;
+    case 'ArrowLeft': case 'a': window.keyVector.x = 0; break;
+    case 'ArrowRight': case 'd': window.keyVector.x = 0; break;
+  }
 });
 
-// ========== ПОЛЕ ЗРЕНИЯ (ray-casting) ==========
+// ========== FOV (ray‐casting) ==========
 function computeFOV(map, player) {
   const visible = new Set();
   const maxR    = 10;
-  const fullFOV = Math.PI / 3;  // 60°
+  const fullFOV = Math.PI / 3;
   const halfFOV = fullFOV / 2;
   const rays    = 64;
 
   for (let i = 0; i <= rays; i++) {
     const angle = player.directionAngle - halfFOV + (i / rays) * fullFOV;
-    const dx    = Math.cos(angle), dy = Math.sin(angle);
-    let dist    = 0;
-
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    let dist = 0;
     while (dist < maxR) {
-      const fx = player.x + dx * dist;
-      const fy = player.y + dy * dist;
-      const ix = Math.floor(fx);
-      const iy = Math.floor(fy);
-
-      // убедимся, что нужный чанк сгенерирован
+      const fx = player.x + dx * dist,
+            fy = player.y + dy * dist;
+      const ix = Math.floor(fx),
+            iy = Math.floor(fy);
       map.ensureChunk(Math.floor(ix / RENDER_W), Math.floor(iy / RENDER_H));
-
       if (ix < 0 || iy < 0 || ix >= map.cols || iy >= map.rows) break;
       visible.add(`${ix},${iy}`);
       if (map.tiles[iy][ix].type === 'wall') break;
       dist += 0.2;
     }
   }
-
   return visible;
 }
 
-// ========== КЛАСС MONSTER ==========
+// ========== MONSTER ==========
 class Monster {
   constructor(x, y, real = true) {
-    this.x = x;
-    this.y = y;
+    this.x = x; this.y = y;
     this.real = real;
     this.timer = 0;
     this.visibleTimer = 0;
     this.dead = false;
   }
-
   update(dt, visible) {
     const key = `${Math.floor(this.x)},${Math.floor(this.y)}`;
     const inView = visible.has(key);
@@ -81,12 +76,9 @@ class Monster {
     this.visibleTimer = inView ? this.visibleTimer + dt : 0;
     if (!this.real && this.timer > 5) this.dead = true;
   }
-
   draw(ctx) {
-    const px = (this.x + 0.5) * TILE_SIZE;
-    const py = (this.y + 0.5) * TILE_SIZE;
-
-    // кратковременный силуэт при спавне
+    const px = (this.x + 0.5) * TILE_SIZE,
+          py = (this.y + 0.5) * TILE_SIZE;
     if (this.timer < 0.2) {
       ctx.save();
       ctx.globalAlpha = this.real ? 0.5 : 0.2;
@@ -95,9 +87,7 @@ class Monster {
       ctx.arc(px, py, TILE_SIZE * 0.4, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
-    }
-    // настоящий монстр, когда в поле зрения
-    else if (this.real && this.visibleTimer > 0) {
+    } else if (this.real && this.visibleTimer > 0) {
       ctx.save();
       ctx.globalAlpha = 1;
       ctx.fillStyle = 'white';
@@ -112,11 +102,8 @@ class Monster {
 // ========== МИР И СПАВН ==========
 window.gameMap = new GameMap(300, 300, RENDER_W, RENDER_H, TILE_SIZE);
 const gameMap   = window.gameMap;
-
-// перед спавном убедимся, что стартовый чанк создан
 gameMap.ensureChunk(0, 0);
 
-// собираем все «пола» в стартовом чанке
 const spawnList = [];
 for (let y = 0; y < RENDER_H; y++) {
   for (let x = 0; x < RENDER_W; x++) {
@@ -125,12 +112,10 @@ for (let y = 0; y < RENDER_H; y++) {
     }
   }
 }
-// fallback центр
 const start = spawnList.length
   ? spawnList[Math.floor(Math.random() * spawnList.length)]
-  : { x: Math.floor(RENDER_W/2), y: Math.floor(RENDER_H/2) };
+  : { x: Math.floor(RENDER_W / 2), y: Math.floor(RENDER_H / 2) };
 
-// создаём игрока на «флоре»
 window.player = {
   x: start.x + 0.5,
   y: start.y + 0.5,
@@ -138,11 +123,8 @@ window.player = {
 };
 const player = window.player;
 
-// ========== СПИСОК МОНСТРОВ ==========
-window.monsters = window.monsters || [];
+window.monsters = [];
 const monsters   = window.monsters;
-
-// спавним монстров каждые 2 секунды
 setInterval(() => {
   const vis = computeFOV(gameMap, player);
   let x, y, key;
@@ -162,60 +144,55 @@ function gameLoop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // 1) собираем ввод и вычисляем направление
-  const iv1 = window.inputVector || { x:0, y:0 };
-  const iv2 = window.keyVector   || { x:0, y:0 };
+  // ввод + нормализация
+  const iv1 = window.inputVector, iv2 = window.keyVector;
   let iv = { x: iv1.x + iv2.x, y: iv1.y + iv2.y };
   const len = Math.hypot(iv.x, iv.y) || 1;
   iv.x /= len; iv.y /= len;
-  if (iv.x !== 0 || iv.y !== 0) {
-    player.directionAngle = Math.atan2(iv.y, iv.x);
-  }
+  if (iv.x || iv.y) player.directionAngle = Math.atan2(iv.y, iv.x);
 
-  // 2) плавное движение + жёсткая коллизия
-  const nx = player.x + iv.x * SPEED * dt;
-  const ny = player.y + iv.y * SPEED * dt;
+  // движение с жёсткой коллизией
+  const nx = player.x + iv.x * SPEED * dt,
+        ny = player.y + iv.y * SPEED * dt;
   if (!gameMap.isWall(Math.floor(nx), Math.floor(ny))) {
-    player.x = nx;
-    player.y = ny;
+    player.x = nx; player.y = ny;
   }
 
-  // 3) считаем поле зрения
+  // FOV
   const visible = computeFOV(gameMap, player);
 
-  // 4) «память» и регенерация тайлов только в загруженных чанках
+  // «память» и регенерация по загруженным чанкам
   for (let key of gameMap.generatedChunks) {
-    const [cx,cy] = key.split(',').map(Number);
+    const [cx, cy] = key.split(',').map(Number);
     const x0 = cx * RENDER_W, y0 = cy * RENDER_H;
     for (let y = y0; y < y0 + RENDER_H; y++) {
       for (let x = x0; x < x0 + RENDER_W; x++) {
         if (x<0||y<0||x>=gameMap.cols||y>=gameMap.rows) continue;
-        const tile = gameMap.tiles[y][x];
-        const k    = `${x},${y}`;
+        const tile = gameMap.tiles[y][x],
+              k    = `${x},${y}`;
         if (visible.has(k)) {
           tile.memoryAlpha = 1;
         } else if (tile.memoryAlpha > 0) {
           tile.memoryAlpha = Math.max(0, tile.memoryAlpha - FOG_FADE * dt);
-          if (tile.memoryAlpha === 0) {
-            gameMap.regenerateTile(x, y);
-          }
+          if (tile.memoryAlpha === 0) gameMap.regenerateTile(x, y);
         }
       }
     }
   }
 
-  // 5) обновляем и чистим монстров
+  // обновление монстров
   monsters.forEach(m => m.update(dt, visible));
   window.monsters = monsters.filter(m => !m.dead);
 
-  // 6) ОТРИСОВКА
-  const camX   = player.x - RENDER_W/2;
-  const camY   = player.y - RENDER_H/2;
-  const startX = Math.floor(camX), startY = Math.floor(camY);
-  const endX   = Math.ceil(camX + RENDER_W),
+  // отрисовка
+  const camX = player.x - RENDER_W/2,
+        camY = player.y - RENDER_H/2;
+  const startX = Math.floor(camX),
+        startY = Math.floor(camY),
+        endX   = Math.ceil(camX + RENDER_W),
         endY   = Math.ceil(camY + RENDER_H);
 
-  // генерируем чанки, если мы к ним приблизились
+  // генерируем новые чанки при приближении
   for (let cy = Math.floor(startY/RENDER_H); cy <= Math.floor((endY-1)/RENDER_H); cy++) {
     for (let cx = Math.floor(startX/RENDER_W); cx <= Math.floor((endX-1)/RENDER_W); cx++) {
       gameMap.ensureChunk(cx, cy);
@@ -226,11 +203,11 @@ function gameLoop(now = performance.now()) {
   ctx.save();
   ctx.translate(-camX * TILE_SIZE, -camY * TILE_SIZE);
 
-  // рисуем тайлы
+  // тайлы
   for (let y = startY; y < endY; y++) {
-    if (y < 0 || y >= gameMap.rows) continue;
+    if (y<0||y>=gameMap.rows) continue;
     for (let x = startX; x < endX; x++) {
-      if (x < 0 || x >= gameMap.cols) continue;
+      if (x<0||x>=gameMap.cols) continue;
       const tile = gameMap.tiles[y][x];
       ctx.globalAlpha = tile.memoryAlpha;
       ctx.fillStyle   = tile.type === 'wall' ? '#444' : '#888';
@@ -239,10 +216,10 @@ function gameLoop(now = performance.now()) {
   }
   ctx.globalAlpha = 1;
 
-  // рисуем монстров
+  // монстры
   monsters.forEach(m => m.draw(ctx));
 
-  // рисуем игрока
+  // игрок
   const px = (player.x + 0.5) * TILE_SIZE,
         py = (player.y + 0.5) * TILE_SIZE;
   ctx.fillStyle = 'red';
@@ -254,5 +231,5 @@ function gameLoop(now = performance.now()) {
   requestAnimationFrame(gameLoop);
 }
 
-// запускаем игру
+// старт
 gameLoop();
