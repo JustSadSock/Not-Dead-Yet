@@ -75,32 +75,35 @@ function carveRandomCaves(tiles) {
   }
 }
 
-/** Убираем диагональные щели и расширяем узкие проходы до 2-клеточной ширины */
+/** Убираем диагональные «дыры» и расширяем узкие коридоры до 2 клеток */
 function fixDiagonalsAndCorridors(t) {
-  for (var y=1; y<CHUNK_H; y++) {
-    for (var x=1; x<CHUNK_W; x++) {
-      if (t[y][x]!==FLOOR) continue;
+  // избегаем выхода за границы при [y+1] или [x+1]
+  for (var y = 1; y < CHUNK_H - 1; y++) {
+    for (var x = 1; x < CHUNK_W - 1; x++) {
+      if (t[y][x] !== FLOOR) continue;
+
       // диагонали
-      if (t[y-1][x-1]===FLOOR && t[y-1][x]===WALL && t[y][x-1]===WALL) {
+      if (t[y-1][x-1] === FLOOR && t[y-1][x] === WALL && t[y][x-1] === WALL) {
         t[y-1][x] = FLOOR;
       }
-      if (t[y-1][x+1]===FLOOR && t[y-1][x]===WALL && t[y][x+1]===WALL) {
+      if (t[y-1][x+1] === FLOOR && t[y-1][x] === WALL && t[y][x+1] === WALL) {
         t[y-1][x] = FLOOR;
       }
-      if (t[y+1] && t[y+1][x-1]===FLOOR && t[y][x-1]===WALL && t[y+1][x]===WALL) {
+      if (t[y+1][x-1] === FLOOR && t[y][x-1] === WALL && t[y+1][x] === WALL) {
         t[y][x-1] = FLOOR;
       }
-      if (t[y+1] && t[y+1][x+1]===FLOOR && t[y][x+1]===WALL && t[y+1][x]===WALL) {
+      if (t[y+1][x+1] === FLOOR && t[y][x+1] === WALL && t[y+1][x] === WALL) {
         t[y][x+1] = FLOOR;
       }
-      // узкие вертикальные
-      if (t[y][x-1]===WALL && t[y][x+1]===WALL &&
-         ((t[y-1]&&t[y-1][x]===FLOOR)||(t[y+1]&&t[y+1][x]===FLOOR))) {
+
+      // узкие вертикальные коридоры
+      if (t[y][x-1] === WALL && t[y][x+1] === WALL &&
+          (t[y-1][x] === FLOOR || t[y+1][x] === FLOOR)) {
         t[y][x+1] = FLOOR;
       }
-      // узкие горизонтальные
-      if (t[y-1][x]===WALL && t[y+1][x]===WALL &&
-         (t[y][x-1]===FLOOR||t[y][x+1]===FLOOR)) {
+      // узкие горизонтальные коридоры
+      if (t[y-1][x] === WALL && t[y+1][x] === WALL &&
+          (t[y][x-1] === FLOOR || t[y][x+1] === FLOOR)) {
         t[y+1][x] = FLOOR;
       }
     }
@@ -108,31 +111,31 @@ function fixDiagonalsAndCorridors(t) {
 }
 
 /**
- * Удаляет тупики: где 3 стены → продаёт прямой коридор до границы чанка
+ * Удаляет тупики: где 3 стены → пробивает прямой коридор до границы чанка
  */
 function removeDeadEnds(t) {
-  for (var y=1; y<CHUNK_H-1; y++) {
-    for (var x=1; x<CHUNK_W-1; x++) {
-      if (t[y][x]!==FLOOR) continue;
-      var w=0;
-      if (t[y-1][x]===WALL) w++;
-      if (t[y+1][x]===WALL) w++;
-      if (t[y][x-1]===WALL) w++;
-      if (t[y][x+1]===WALL) w++;
-      if (w>=3) carveExitToBorder(t, x, y);
+  for (var y = 1; y < CHUNK_H - 1; y++) {
+    for (var x = 1; x < CHUNK_W - 1; x++) {
+      if (t[y][x] !== FLOOR) continue;
+      var walls = 0;
+      if (t[y-1][x] === WALL) walls++;
+      if (t[y+1][x] === WALL) walls++;
+      if (t[y][x-1] === WALL) walls++;
+      if (t[y][x+1] === WALL) walls++;
+      if (walls >= 3) carveExitToBorder(t, x, y);
     }
   }
 }
 
 /** Пробивает прямой коридор от (sx,sy) до ближайшей границы чанка */
 function carveExitToBorder(t, sx, sy) {
-  var dl = sx, dr = CHUNK_W-1-sx;
-  var dt = sy, db = CHUNK_H-1-sy;
+  var dl = sx, dr = CHUNK_W-1 - sx;
+  var dt = sy, db = CHUNK_H-1 - sy;
   var m  = Math.min(dl, dr, dt, db);
-  if (m===dl) for (var x=sx; x>=0; x--) t[sy][x] = FLOOR;
-  else if (m===dr) for (var x=sx; x<CHUNK_W; x++) t[sy][x] = FLOOR;
-  else if (m===dt) for (var y=sy; y>=0; y--) t[y][sx] = FLOOR;
-  else            for (var y=sy; y<CHUNK_H; y++) t[y][sx] = FLOOR;
+  if (m === dl) for (var x = sx; x >= 0; x--) t[sy][x] = FLOOR;
+  else if (m === dr) for (var x = sx; x < CHUNK_W;  x++) t[sy][x] = FLOOR;
+  else if (m === dt) for (var y = sy; y >= 0; y--) t[y][sx] = FLOOR;
+  else             for (var y = sy; y < CHUNK_H;  y++) t[y][sx] = FLOOR;
 }
 
 /**
@@ -141,13 +144,13 @@ function carveExitToBorder(t, sx, sy) {
  */
 function extractBorderExits(t) {
   var e = { north:[], south:[], west:[], east:[] };
-  for (var x=1; x<CHUNK_W-1; x++) {
-    if (t[0][x]===FLOOR)           e.north.push({x:x,y:0});
-    if (t[CHUNK_H-1][x]===FLOOR)   e.south.push({x:x,y:CHUNK_H-1});
+  for (var x = 1; x < CHUNK_W - 1; x++) {
+    if (t[0][x] === FLOOR)                    e.north.push({x:x, y:0});
+    if (t[CHUNK_H-1][x] === FLOOR)            e.south.push({x:x, y:CHUNK_H-1});
   }
-  for (var y=1; y<CHUNK_H-1; y++) {
-    if (t[y][0]===FLOOR)           e.west.push({x:0,y:y});
-    if (t[y][CHUNK_W-1]===FLOOR)   e.east.push({x:CHUNK_W-1,y:y});
+  for (var y = 1; y < CHUNK_H - 1; y++) {
+    if (t[y][0] === FLOOR)                    e.west.push({x:0, y:y});
+    if (t[y][CHUNK_W-1] === FLOOR)            e.east.push({x:CHUNK_W-1, y:y});
   }
   return e;
 }
@@ -166,21 +169,19 @@ function connectChunkToNeighbors(cx, cy) {
   var key   = cx + "," + cy;
   var chunk = worldChunks.get(key);
   var dirs  = [
-    {dx:0,dy:-1,side:"north",opp:"south"},
-    {dx:0,dy: 1,side:"south",opp:"north"},
-    {dx:-1,dy:0,side:"west", opp:"east" },
-    {dx: 1,dy:0,side:"east", opp:"west" }
+    { dx:0,  dy:-1, side:"north", opp:"south" },
+    { dx:0,  dy: 1, side:"south", opp:"north" },
+    { dx:-1, dy:0,  side:"west",  opp:"east"  },
+    { dx: 1, dy:0,  side:"east",  opp:"west"  }
   ];
   dirs.forEach(function(d) {
-    var nk = (cx+d.dx)+","+(cy+d.dy);
+    var nk = (cx+d.dx) + "," + (cy+d.dy);
     if (!worldChunks.has(nk)) return;
     var nCh = worldChunks.get(nk);
-    // для каждого выхода на our side — прорезаем ответный в соседнем
+    // для каждого выхода на нашей стороне — прорезаем ответный в соседнем
     chunk.exits[d.side].forEach(function(p) {
-      nCh.tiles[p.y + (d.dy* (d.side==="west"||d.side==="east"?0:0))]
-                 [p.x + (d.dx* (d.side==="north"||d.side==="south"?0:0))] = FLOOR;
+      nCh.tiles[p.y][p.x] = FLOOR;
     });
-    // и наоборот: можно симметрично, но не обязательно если gen обоих чанков делал exit-экстракцию
   });
 }
 
@@ -188,7 +189,7 @@ function connectChunkToNeighbors(cx, cy) {
  * Проверка стеной ли является глобальная клетка
  */
 function isWall(gx, gy) {
-  if (gx<0||gy<0) return true;
+  if (gx < 0 || gy < 0) return true;
   var cx = Math.floor(gx/CHUNK_W),
       cy = Math.floor(gy/CHUNK_H);
   ensureChunk(cx, cy);
@@ -213,8 +214,8 @@ function regenerateChunksPreserveFOV(chunksSet, computeFOV, player) {
     vis.forEach(function(k) {
       var p = k.split(","), gx=+p[0], gy=+p[1];
       if (Math.floor(gx/CHUNK_W)===cx && Math.floor(gy/CHUNK_H)===cy) {
-        var lx=((gx%CHUNK_W)+CHUNK_W)%CHUNK_W,
-            ly=((gy%CHUNK_H)+CHUNK_H)%CHUNK_H;
+        var lx = ((gx%CHUNK_W)+CHUNK_W)%CHUNK_W,
+            ly = ((gy%CHUNK_H)+CHUNK_H)%CHUNK_H;
         var tile = worldChunks.get(key).tiles[ly][lx];
         saved.push({ gx:gx, gy:gy, type: tile });
       }
