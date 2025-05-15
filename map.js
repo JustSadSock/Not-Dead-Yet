@@ -1,54 +1,50 @@
 // map.js
 
 /**
- * Класс GameMap отвечает за:
- *  - чанковую генерацию и пересборку чанков
- *  - хранение тайлов (стена/пол) и метаданных (visited, memoryAlpha)
- *  - перегенерацию забытых чанков с сохранением FOV
+ * GameMap — чанковая карта с перегенерацией забытых тайлов.
  */
 class GameMap {
   constructor() {
-    this.chunkSize = 32;              // размер одного чанка в тайлах (32×32)
-    this.chunks    = new Map();       // Map<"cx,cy", ChunkData>
-    this.generating = new Set();      // текущие чанки в процессе генерации
-    this.currentChunkX = null;        // координаты чанка игрока
+    this.chunkSize   = 32;           // размер чанка в тайлах
+    this.chunks      = new Map();    // Map<"cx,cy", {tiles, meta}>
+    this.generating  = new Set();    // чанки в процессе генерации
+    this.currentChunkX = null;
     this.currentChunkY = null;
   }
 
   /**
-   * Гарантированно создает чанк (если не существует).
-   * @param {number} cx — номер чанка по X
-   * @param {number} cy — номер чанка по Y
+   * Убедиться, что чанк (cx,cy) существует: если нет — создаём.
    */
   ensureChunk(cx, cy) {
     const key = `${cx},${cy}`;
     if (this.chunks.has(key) || this.generating.has(key)) return;
     this.generating.add(key);
 
-    // Собственно генерация
+    // 1) Генерируем новую сетку пола/стен
     const grid = this._generateChunk(cx, cy);
-    // Вставляем метаданные
+
+    // 2) Создаём массив метаданных
     const meta = [];
     for (let y = 0; y < this.chunkSize; y++) {
       meta[y] = [];
       for (let x = 0; x < this.chunkSize; x++) {
         meta[y][x] = {
-          memoryAlpha: 0,  // текущее "память" (0..1)
-          visited:     false // видел ли игрок этот тайл хоть раз
+          memoryAlpha: 0,   // насколько помнится (0..1)
+          visited:     false
         };
       }
     }
-    // Сохраняем в Map
+
+    // 3) Сохраняем в Map
     this.chunks.set(key, { tiles: grid, meta: meta });
     this.generating.delete(key);
 
-    // Соединяем с соседями, если они есть
+    // 4) Соединяем с уже существующими соседями
     this._connectWithNeighbors(cx, cy);
   }
 
   /**
-   * Проверка, является ли тайл по глобальным координатам (x,y) полом.
-   * Если чанка нет — возвращает false (стена).
+   * Проверка, можно ли в (x,y) ходить (пол).
    */
   isFloor(x, y) {
     const cx = Math.floor(x / this.chunkSize);
@@ -62,7 +58,7 @@ class GameMap {
   }
 
   /**
-   * Удаляет чанки вне радиуса 1 от (cx,cy) — "забвение" дальних чанков.
+   * Забыть все чанки дальше чем в 1 чанке от (cx,cy).
    */
   forgetDistantChunks(cx, cy) {
     for (let key of this.chunks.keys()) {
@@ -74,145 +70,153 @@ class GameMap {
   }
 
   /**
-   * Перегенерирует чанки из множества keys, сохраняя FOV-тайлы.
-   * @param {Set<string>} keys — например "0,1","-1,0" и т.д.
-   * @param {function} computeFOV — функция (x,y,a)->Set<"gx,gy">
-   * @param {{x,y,angle}} player — положение/угол игрока
+   * Перегенерирует чанки из keys, сохраняя FOV-тайлы.
+   * keys — Set<"cx,cy">.
+   * computeFOV(x,y,angle) → Set<"gx,gy">.
+   * player = {x,y,angle}.
    */
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
-    // Сначала получим текущий FOV
+    // вычисляем текущее FOV
     const vis = computeFOV(player.x, player.y, player.angle);
     for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
-      // Сохраняем видимые куски внутри этого чанка
-      const chunk = this.chunks.get(key);
-      if (!chunk) continue;
-      const saved = [];
+      const stored = this.chunks.get(key);
+      if (!stored) continue;
+
+      // 1) сохраняем все тайлы в FOV внутри этого чанка
+      const stash = [];
       const baseX = cx * this.chunkSize;
       const baseY = cy * this.chunkSize;
-      for (let gyx of vis) {
-        const [gx, gy] = gyx.split(',').map(Number);
-        const ccx = Math.floor(gx / this.chunkSize);
-        const ccy = Math.floor(gy / this.chunkSize);
-        if (ccx === cx && ccy === cy) {
+      for (let node of vis) {
+        const [gx, gy] = node.split(',').map(Number);
+        if (Math.floor(gx/this.chunkSize) === cx &&
+            Math.floor(gy/this.chunkSize) === cy) {
           const lx = gx - baseX, ly = gy - baseY;
-          saved.push({ lx, ly, tile: chunk.tiles[ly][lx], meta: {...chunk.meta[ly][lx]} });
+          stash.push({
+            lx, ly,
+            tile: stored.tiles[ly][lx],
+            meta: { ...stored.meta[ly][lx] }
+          });
         }
       }
-      // Переген
+
+      // 2) полностью удаляем старый чанк
+      this.chunks.delete(key);
+
+      // 3) генерируем заново
       this.ensureChunk(cx, cy);
-      // Заменить вновь созданные мета-данные на сохраненные для FOV
-      const newChunk = this.chunks.get(key);
-      for (let s of saved) {
-        newChunk.tiles[s.ly][s.lx] = s.tile;
-        newChunk.meta[s.ly][s.lx]  = s.meta;
+
+      // 4) "залепляем" FOV-тайлы обратно
+      const fresh = this.chunks.get(key);
+      for (let s of stash) {
+        fresh.tiles[s.ly][s.lx] = s.tile;
+        fresh.meta [s.ly][s.lx] = s.meta;
       }
     }
   }
 
-  // ———————————
-  //  Внутренняя часть генератора
-  // ———————————
-  _generateChunk(cx, cy) {
-    const N = 11;                   // внутр. сетка для дамбиных комнат
-    const size = this.chunkSize;    // 32
-    // 1) инициализируем все стены = false
-    const grid = Array.from({length: size}, ()=>Array(size).fill(false));
+  // ————————
+  // Внутренние функции
+  // ————————
 
-    // 2) создаем лабиринт на сетке N×N (carve spanning tree)
-    const conn = Array.from({length: N}, ()=>Array.from({length: N}, ()=>({N:0,S:0,E:0,W:0})));
-    const visited = Array.from({length: N}, ()=>Array(N).fill(false));
-    const stack = [{x:Math.floor(N/2),y:Math.floor(N/2)}];
+  /**
+   * Объединяет новый чанк (cx,cy) с его четырьмя соседями, если они есть.
+   */
+  _connectWithNeighbors(cx, cy) {
+    const meKey = `${cx},${cy}`;
+    const me    = this.chunks.get(meKey).tiles;
+    const size  = this.chunkSize;
+    const dirs  = [
+      {dx:-1, dy:0, meX:0,          nbX:size-1, meY0:0,    meY1:size-1},
+      {dx: 1, dy:0, meX:size-1,     nbX:0,       meY0:0,    meY1:size-1},
+      {dx:0,  dy:-1, meY:0,         nbY:size-1, meX0:0,    meX1:size-1},
+      {dx:0,  dy: 1, meY:size-1,    nbY:0,       meX0:0,    meX1:size-1}
+    ];
+    for (let d of dirs) {
+      const nbKey = `${cx+d.dx},${cy+d.dy}`;
+      if (!this.chunks.has(nbKey)) continue;
+      const nb = this.chunks.get(nbKey).tiles;
+
+      if (d.dx !== 0) {
+        // вертикальная граница
+        for (let y = d.meY0; y <= d.meY1; y++) {
+          if (me[y][d.meX] && !nb[y][d.nbX]) nb[y][d.nbX] = true;
+          if (nb[y][d.nbX] && !me[y][d.meX]) me[y][d.meX] = true;
+        }
+      } else {
+        // горизонтальная граница
+        for (let x = d.meX0; x <= d.meX1; x++) {
+          if (me[d.meY][x] && !nb[d.nbY][x]) nb[d.nbY][x] = true;
+          if (nb[d.nbY][x] && !me[d.meY][x]) me[d.meY][x] = true;
+        }
+      }
+    }
+  }
+
+  /**
+   * Создаёт одну новую сетку тайлов 32×32 по алгоритму лабиринта.
+   */
+  _generateChunk(cx, cy) {
+    const N    = 11; // внутренняя сетка узлов
+    const size = this.chunkSize;
+    // 1) инициализировать стены
+    const grid = Array.from({length:size}, ()=>Array(size).fill(false));
+
+    // 2) carve spanning tree на сетке N×N
+    const conn    = Array.from({length:N}, ()=>Array.from({length:N}, ()=>({N:0,S:0,E:0,W:0})));
+    const visited = Array.from({length:N}, ()=>Array(N).fill(false));
+    const stack   = [{x:Math.floor(N/2), y:Math.floor(N/2)}];
     visited[stack[0].y][stack[0].x] = true;
-    while(stack.length){
+
+    while (stack.length) {
       const top = stack[stack.length-1];
-      const dirs = [];
-      if(top.y>0        && !visited[top.y-1][top.x]) dirs.push('N');
-      if(top.y<N-1      && !visited[top.y+1][top.x]) dirs.push('S');
-      if(top.x>0        && !visited[top.y][top.x-1]) dirs.push('W');
-      if(top.x<N-1      && !visited[top.y][top.x+1]) dirs.push('E');
-      if(dirs.length){
-        const d = dirs[Math.floor(Math.random()*dirs.length)];
-        let nx=top.x, ny=top.y;
-        if(d==='N') ny--;
-        if(d==='S') ny++;
-        if(d==='W') nx--;
-        if(d==='E') nx++;
+      const nbr = [];
+      if (top.y>0   && !visited[top.y-1][top.x]) nbr.push('N');
+      if (top.y<N-1 && !visited[top.y+1][top.x]) nbr.push('S');
+      if (top.x>0   && !visited[top.y][top.x-1]) nbr.push('W');
+      if (top.x<N-1 && !visited[top.y][top.x+1]) nbr.push('E');
+      if (nbr.length) {
+        const d = nbr[Math.floor(Math.random()*nbr.length)];
+        let nx = top.x, ny = top.y;
+        if (d==='N') ny--;
+        if (d==='S') ny++;
+        if (d==='W') nx--;
+        if (d==='E') nx++;
         conn[top.y][top.x][d] = 1;
-        conn[ny][nx][{'N':'S','S':'N','E':'W','W':'E'}[d]] = 1;
-        visited[ny][nx] = true;
+        const od = {'N':'S','S':'N','E':'W','W':'E'}[d];
+        conn[ny][nx][od]     = 1;
+        visited[ny][nx]      = true;
         stack.push({x:nx,y:ny});
       } else {
         stack.pop();
       }
     }
 
-    // 3) прокладываем комнаты и коридоры в реальный grid
-    // каждый узел сетки = 3×3 блока с проходами по соединениям
-    for(let j=0; j<N; j++){
-      for(let i=0; i<N; i++){
-        const baseX = i*3, baseY = j*3;
+    // 3) маппинг узлов в 3×3 блоки тайлов
+    for (let j=0; j<N; j++) {
+      for (let i=0; i<N; i++) {
+        const bx = i*3, by = j*3;
         // 2×2 пол
-        grid[baseY][  baseX] = true;
-        grid[baseY][  baseX+1] = true;
-        grid[baseY+1][baseX] = true;
-        grid[baseY+1][baseX+1] = true;
-        // восток
-        if(conn[j][i].E){
-          grid[baseY][  baseX+2] = true;
-          grid[baseY+1][baseX+2] = true;
+        grid[by][bx]     = true;
+        grid[by][bx+1]   = true;
+        grid[by+1][bx]   = true;
+        grid[by+1][bx+1] = true;
+        // проход вправо
+        if (conn[j][i].E) {
+          grid[by][bx+2]   = true;
+          grid[by+1][bx+2] = true;
         }
-        // юг
-        if(conn[j][i].S){
-          grid[baseY+2][baseX]   = true;
-          grid[baseY+2][baseX+1] = true;
+        // проход вниз
+        if (conn[j][i].S) {
+          grid[by+2][bx]   = true;
+          grid[by+2][bx+1] = true;
         }
       }
     }
-    return grid;
-  }
 
-  /**
-   * Соединяем свежесозданный чанк с уже существующими соседями
-   */
-  _connectWithNeighbors(cx, cy) {
-    const meKey = `${cx},${cy}`;
-    const me     = this.chunks.get(meKey).tiles;
-    const size   = this.chunkSize;
-    const dirs = [
-      {dx:-1,dy:0, meX:0, meY0:0, meY1:size-1, nbX:size-1, nbY0:0, nbY1:size-1}, // W
-      {dx: 1,dy:0, meX:size-1, meY0:0, meY1:size-1, nbX:0,   nbY0:0, nbY1:size-1}, // E
-      {dx:0, dy:-1, meY:0, meX0:0, meX1:size-1, nbY:size-1, nbX0:0, nbX1:size-1}, // N
-      {dx:0, dy: 1, meY:size-1, meX0:0, meX1:size-1, nbY:0,   nbX0:0, nbX1:size-1}  // S
-    ];
-    for(let d of dirs){
-      const nbKey = `${cx+d.dx},${cy+d.dy}`;
-      if(!this.chunks.has(nbKey)) continue;
-      const nb = this.chunks.get(nbKey).tiles;
-      if(d.dx!==0){
-        // соединяем вертикальные границы
-        for(let yy=d.meY0; yy<=d.meY1; yy++){
-          if(me[yy][d.meX] && !nb[yy][d.nbX]) {
-            nb[yy][d.nbX] = true;
-          }
-          if(nb[yy][d.nbX] && !me[yy][d.meX]) {
-            me[yy][d.meX] = true;
-          }
-        }
-      } else {
-        // соединяем горизонтальные границы
-        for(let xx=d.meX0; xx<=d.meX1; xx++){
-          if(me[d.meY][xx] && !nb[d.nbY][xx]) {
-            nb[d.nbY][xx] = true;
-          }
-          if(nb[d.nbY][xx] && !me[d.meY][xx]) {
-            me[d.meY][xx] = true;
-          }
-        }
-      }
-    }
+    return grid;
   }
 }
 
-// Делаем GameMap глобальным
+// Делаём GameMap доступным глобально
 window.GameMap = GameMap;
