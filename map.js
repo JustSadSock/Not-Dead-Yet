@@ -1,172 +1,170 @@
+// map.js
+
+/**
+ * Класс GameMap отвечает за:
+ *  - чанковую генерацию и пересборку чанков
+ *  - хранение тайлов (стена/пол) и метаданных (visited, memoryAlpha)
+ *  - перегенерацию забытых чанков с сохранением FOV
+ */
 class GameMap {
   constructor() {
-    this.chunkSize = 32;        // number of tiles per chunk side
-    this._algoSize = 11;        // internal algorithm grid size for chunk generation
-    this.chunks = new Map();    // store generated chunks by key "cx,cy"
-    this.generating = new Set(); // track chunks in generation to avoid recursion
-    // Track current chunk for forgetting logic
-    this.currentChunkX = null;
+    this.chunkSize = 32;              // размер одного чанка в тайлах (32×32)
+    this.chunks    = new Map();       // Map<"cx,cy", ChunkData>
+    this.generating = new Set();      // текущие чанки в процессе генерации
+    this.currentChunkX = null;        // координаты чанка игрока
     this.currentChunkY = null;
   }
 
-  // Ensure chunk at (cx,cy) exists (generate if not)
+  /**
+   * Гарантированно создает чанк (если не существует).
+   * @param {number} cx — номер чанка по X
+   * @param {number} cy — номер чанка по Y
+   */
   ensureChunk(cx, cy) {
     const key = `${cx},${cy}`;
-    if(this.chunks.has(key) || this.generating.has(key)) {
-      return; // already exists or in progress
-    }
+    if (this.chunks.has(key) || this.generating.has(key)) return;
     this.generating.add(key);
-    // Generate new chunk data
-    const chunkData = this._generateChunk(cx, cy);
-    this.chunks.set(key, chunkData);
-    this.generating.delete(key);
-    // After generation, connect with any existing neighbors (both directions)
-    const neighbors = [
-      {cx: cx-1, cy: cy, side: 'W'}, // west neighbor
-      {cx: cx+1, cy: cy, side: 'E'}, // east neighbor
-      {cx: cx, cy: cy-1, side: 'N'}, // north neighbor
-      {cx: cx, cy: cy+1, side: 'S'}  // south neighbor
-    ];
-    for(const nb of neighbors) {
-      const nbKey = `${nb.cx},${nb.cy}`;
-      if(this.chunks.has(nbKey)) {
-        // neighbor exists, connect current and neighbor at the shared border
-        this._connectChunks(nb.side, chunkData, this.chunks.get(nbKey));
+
+    // Собственно генерация
+    const grid = this._generateChunk(cx, cy);
+    // Вставляем метаданные
+    const meta = [];
+    for (let y = 0; y < this.chunkSize; y++) {
+      meta[y] = [];
+      for (let x = 0; x < this.chunkSize; x++) {
+        meta[y][x] = {
+          memoryAlpha: 0,  // текущее "память" (0..1)
+          visited:     false // видел ли игрок этот тайл хоть раз
+        };
       }
     }
+    // Сохраняем в Map
+    this.chunks.set(key, { tiles: grid, meta: meta });
+    this.generating.delete(key);
+
+    // Соединяем с соседями, если они есть
+    this._connectWithNeighbors(cx, cy);
   }
 
-  // Check if given global tile coordinate is floor (open) or wall (solid)
+  /**
+   * Проверка, является ли тайл по глобальным координатам (x,y) полом.
+   * Если чанка нет — возвращает false (стена).
+   */
   isFloor(x, y) {
-    // Determine chunk coordinates for (x,y)
     const cx = Math.floor(x / this.chunkSize);
     const cy = Math.floor(y / this.chunkSize);
-    const ix = x - cx * this.chunkSize;
-    const iy = y - cy * this.chunkSize;
-    const key = `${cx},${cy}`;
-    if(!this.chunks.has(key)) {
-      // If chunk not loaded, consider it wall for now (player cannot go there until generated)
-      return false;
-    }
-    const chunk = this.chunks.get(key);
-    if(ix < 0 || iy < 0 || ix >= this.chunkSize || iy >= this.chunkSize) {
-      return false;
-    }
-    return chunk[iy][ix] === true;
+    const lx = x - cx * this.chunkSize;
+    const ly = y - cy * this.chunkSize;
+    const chunk = this.chunks.get(`${cx},${cy}`);
+    if (!chunk) return false;
+    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) return false;
+    return chunk.tiles[ly][lx];
   }
 
-  // Remove chunks far from current to implement forgetting mechanic
-  forgetDistantChunks(curCx, curCy) {
-    const keysToRemove = [];
-    for(let key of this.chunks.keys()) {
+  /**
+   * Удаляет чанки вне радиуса 1 от (cx,cy) — "забвение" дальних чанков.
+   */
+  forgetDistantChunks(cx, cy) {
+    for (let key of this.chunks.keys()) {
+      const [ccx, ccy] = key.split(',').map(Number);
+      if (Math.abs(ccx - cx) > 1 || Math.abs(ccy - cy) > 1) {
+        this.chunks.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Перегенерирует чанки из множества keys, сохраняя FOV-тайлы.
+   * @param {Set<string>} keys — например "0,1","-1,0" и т.д.
+   * @param {function} computeFOV — функция (x,y,a)->Set<"gx,gy">
+   * @param {{x,y,angle}} player — положение/угол игрока
+   */
+  regenerateChunksPreserveFOV(keys, computeFOV, player) {
+    // Сначала получим текущий FOV
+    const vis = computeFOV(player.x, player.y, player.angle);
+    for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
-      // keep chunks within 1 chunk distance (Chebyshev distance) from current
-      if(Math.abs(cx - curCx) > 1 || Math.abs(cy - curCy) > 1) {
-        keysToRemove.push(key);
+      // Сохраняем видимые куски внутри этого чанка
+      const chunk = this.chunks.get(key);
+      if (!chunk) continue;
+      const saved = [];
+      const baseX = cx * this.chunkSize;
+      const baseY = cy * this.chunkSize;
+      for (let gyx of vis) {
+        const [gx, gy] = gyx.split(',').map(Number);
+        const ccx = Math.floor(gx / this.chunkSize);
+        const ccy = Math.floor(gy / this.chunkSize);
+        if (ccx === cx && ccy === cy) {
+          const lx = gx - baseX, ly = gy - baseY;
+          saved.push({ lx, ly, tile: chunk.tiles[ly][lx], meta: {...chunk.meta[ly][lx]} });
+        }
       }
-    }
-    for(let key of keysToRemove) {
-      this.chunks.delete(key);
+      // Переген
+      this.ensureChunk(cx, cy);
+      // Заменить вновь созданные мета-данные на сохраненные для FOV
+      const newChunk = this.chunks.get(key);
+      for (let s of saved) {
+        newChunk.tiles[s.ly][s.lx] = s.tile;
+        newChunk.meta[s.ly][s.lx]  = s.meta;
+      }
     }
   }
 
-  // Generate chunk data for given chunk coordinates
+  // ———————————
+  //  Внутренняя часть генератора
+  // ———————————
   _generateChunk(cx, cy) {
-    // Use a random seed based on coordinates for repeatable generation if desired (optional)
-    // For chaotic effect (changing every time), do not fix seed so it will be random each generation.
-    // Create 2D array filled with false (walls)
-    const size = this.chunkSize;
-    const grid = Array.from({length: size}, () => Array(size).fill(false));
+    const N = 11;                   // внутр. сетка для дамбиных комнат
+    const size = this.chunkSize;    // 32
+    // 1) инициализируем все стены = false
+    const grid = Array.from({length: size}, ()=>Array(size).fill(false));
 
-    // Internal algorithm grid of cells for dungeon layout
-    const n = this._algoSize;
-    // Initialize structure for connections (each cell with N,S,E,W boolean)
-    const conn = [];
-    for(let j=0; j<n; j++) {
-      conn[j] = [];
-      for(let i=0; i<n; i++) {
-        conn[j][i] = {N:false, S:false, E:false, W:false};
-      }
-    }
-    // Randomized DFS to carve spanning tree
-    const startCellX = Math.floor(n/2);
-    const startCellY = Math.floor(n/2);
-    const stack = [{x: startCellX, y: startCellY}];
-    const visited = Array.from({length: n}, () => Array(n).fill(false));
-    visited[startCellY][startCellX] = true;
-    const dirs = ['N','S','E','W'];
-    while(stack.length > 0) {
-      const cell = stack[stack.length - 1];
-      // collect unvisited neighbors
-      const neighbors = [];
-      if(cell.y > 0 && !visited[cell.y-1][cell.x]) neighbors.push({dir:'N', x: cell.x, y: cell.y-1});
-      if(cell.y < n-1 && !visited[cell.y+1][cell.x]) neighbors.push({dir:'S', x: cell.x, y: cell.y+1});
-      if(cell.x > 0 && !visited[cell.y][cell.x-1]) neighbors.push({dir:'W', x: cell.x-1, y: cell.y});
-      if(cell.x < n-1 && !visited[cell.y][cell.x+1]) neighbors.push({dir:'E', x: cell.x+1, y: cell.y});
-      if(neighbors.length > 0) {
-        // choose random neighbor and carve
-        const next = neighbors[Math.floor(Math.random() * neighbors.length)];
-        const cx2 = next.x, cy2 = next.y;
-        // carve connection in both cells
-        if(next.dir === 'N') { conn[cell.y][cell.x].N = true; conn[cy2][cx2].S = true; }
-        if(next.dir === 'S') { conn[cell.y][cell.x].S = true; conn[cy2][cx2].N = true; }
-        if(next.dir === 'W') { conn[cell.y][cell.x].W = true; conn[cy2][cx2].E = true; }
-        if(next.dir === 'E') { conn[cell.y][cell.x].E = true; conn[cy2][cx2].W = true; }
-        visited[cy2][cx2] = true;
-        stack.push({x: cx2, y: cy2});
+    // 2) создаем лабиринт на сетке N×N (carve spanning tree)
+    const conn = Array.from({length: N}, ()=>Array.from({length: N}, ()=>({N:0,S:0,E:0,W:0})));
+    const visited = Array.from({length: N}, ()=>Array(N).fill(false));
+    const stack = [{x:Math.floor(N/2),y:Math.floor(N/2)}];
+    visited[stack[0].y][stack[0].x] = true;
+    while(stack.length){
+      const top = stack[stack.length-1];
+      const dirs = [];
+      if(top.y>0        && !visited[top.y-1][top.x]) dirs.push('N');
+      if(top.y<N-1      && !visited[top.y+1][top.x]) dirs.push('S');
+      if(top.x>0        && !visited[top.y][top.x-1]) dirs.push('W');
+      if(top.x<N-1      && !visited[top.y][top.x+1]) dirs.push('E');
+      if(dirs.length){
+        const d = dirs[Math.floor(Math.random()*dirs.length)];
+        let nx=top.x, ny=top.y;
+        if(d==='N') ny--;
+        if(d==='S') ny++;
+        if(d==='W') nx--;
+        if(d==='E') nx++;
+        conn[top.y][top.x][d] = 1;
+        conn[ny][nx][{'N':'S','S':'N','E':'W','W':'E'}[d]] = 1;
+        visited[ny][nx] = true;
+        stack.push({x:nx,y:ny});
       } else {
         stack.pop();
       }
     }
-    // Remove dead ends by adding extra connections
-    let done = false;
-    while(!done) {
-      done = true;
-      for(let j=0; j<n; j++) {
-        for(let i=0; i<n; i++) {
-          // calculate degree of connections for cell
-          const connections = conn[j][i];
-          let deg = 0;
-          for(let d in connections) { if(connections[d]) deg++; }
-          if(deg === 1) {
-            // dead end cell: add an extra connection
-            done = false;
-            // Find a random closed direction to open (inside grid)
-            const options = [];
-            if(j > 0 && !connections.N) options.push('N');
-            if(j < n-1 && !connections.S) options.push('S');
-            if(i > 0 && !connections.W) options.push('W');
-            if(i < n-1 && !connections.E) options.push('E');
-            if(options.length > 0) {
-              const dir = options[Math.floor(Math.random() * options.length)];
-              let nx = i, ny = j;
-              if(dir === 'N') { ny = j-1; conn[j][i].N = true; conn[ny][nx].S = true; }
-              if(dir === 'S') { ny = j+1; conn[j][i].S = true; conn[ny][nx].N = true; }
-              if(dir === 'W') { nx = i-1; conn[j][i].W = true; conn[ny][nx].E = true; }
-              if(dir === 'E') { nx = i+1; conn[j][i].E = true; conn[ny][nx].W = true; }
-            }
-          }
-        }
-      }
-    }
-    // Now conn represents a fully connected labyrinth with no dead ends in cell graph.
-    // Map the cell grid to actual tile grid
-    for(let j=0; j<n; j++) {
-      for(let i=0; i<n; i++) {
-        // Base 2x2 floor block for each cell
-        const baseX = i * 3;
-        const baseY = j * 3;
-        grid[baseY][baseX] = true;
-        grid[baseY][baseX+1] = true;
+
+    // 3) прокладываем комнаты и коридоры в реальный grid
+    // каждый узел сетки = 3×3 блока с проходами по соединениям
+    for(let j=0; j<N; j++){
+      for(let i=0; i<N; i++){
+        const baseX = i*3, baseY = j*3;
+        // 2×2 пол
+        grid[baseY][  baseX] = true;
+        grid[baseY][  baseX+1] = true;
         grid[baseY+1][baseX] = true;
         grid[baseY+1][baseX+1] = true;
-        // Open passages according to connections
-        if(conn[j][i].E) { // east passage
-          grid[baseY][baseX+2] = true;
+        // восток
+        if(conn[j][i].E){
+          grid[baseY][  baseX+2] = true;
           grid[baseY+1][baseX+2] = true;
         }
-        if(conn[j][i].S) { // south passage
-          grid[baseY+2][baseX] = true;
+        // юг
+        if(conn[j][i].S){
+          grid[baseY+2][baseX]   = true;
           grid[baseY+2][baseX+1] = true;
         }
       }
@@ -174,238 +172,47 @@ class GameMap {
     return grid;
   }
 
-  // Connect two adjacent chunks (current and neighbor) at their shared border
-  _connectChunks(side, chunkA, chunkB) {
-    // side indicates which side of chunkA neighbor is on: 'N','S','E','W'
-    let ax0, ay0, ax1, ay1, bx0, by0, bx1, by1;
-    const size = this.chunkSize;
-    // Determine border line coordinates for shared edge
-    if(side === 'E') {
-      // chunkB is to the east of chunkA
-      // x index at east border of A is size-1, at west border of B is 0
-      ax0 = size-1; ax1 = size-1;
-      bx0 = 0; bx1 = 0;
-      ay0 = 0; ay1 = size-1;
-      by0 = 0; by1 = size-1;
-      // We'll iterate vertical border indices (y from 0 to size-1)
-      for(let y = ay0; y <= ay1; y++) {
-        const aFloor = chunkA[y][ax0];
-        const bFloor = chunkB[y][bx0];
-        if(aFloor && !bFloor) {
-          // A has floor at border, B has wall: carve B at border and one tile inward
-          chunkB[y][0] = true;
-          if(1 < size) chunkB[y][1] = true;
-        }
-        if(bFloor && !aFloor) {
-          // B has floor at border, A has wall: carve A at border and one tile inward
-          chunkA[y][size-1] = true;
-          if(size-2 >= 0) chunkA[y][size-2] = true;
-        }
-      }
-      // After carving, connect carved segments in each chunk to their interior using BFS
-      this._integrateBorderOpening(chunkA, 'E');
-      this._integrateBorderOpening(chunkB, 'W');
-    }
-    else if(side === 'W') {
-      // chunkB is to the west of chunkA
-      // x index at west border of A is 0, east border of B is size-1
-      ax0 = 0; ax1 = 0;
-      bx0 = size-1; bx1 = size-1;
-      ay0 = 0; ay1 = size-1;
-      by0 = 0; by1 = size-1;
-      for(let y = ay0; y <= ay1; y++) {
-        const aFloor = chunkA[y][ax0];
-        const bFloor = chunkB[y][bx0];
-        if(aFloor && !bFloor) {
-          chunkB[y][bx0] = true;
-          if(bx0-1 >= 0) chunkB[y][bx0-1] = true;
-        }
-        if(bFloor && !aFloor) {
-          chunkA[y][ax0] = true;
-          if(ax0+1 < size) chunkA[y][ax0+1] = true;
-        }
-      }
-      this._integrateBorderOpening(chunkA, 'W');
-      this._integrateBorderOpening(chunkB, 'E');
-    }
-    else if(side === 'S') {
-      // chunkB is to the south of chunkA
-      // y index at south border of A is size-1, north border of B is 0
-      ay0 = size-1; ay1 = size-1;
-      by0 = 0; by1 = 0;
-      ax0 = 0; ax1 = size-1;
-      bx0 = 0; bx1 = size-1;
-      for(let x = ax0; x <= ax1; x++) {
-        const aFloor = chunkA[ay0][x];
-        const bFloor = chunkB[by0][x];
-        if(aFloor && !bFloor) {
-          chunkB[0][x] = true;
-          if(1 < size) chunkB[1][x] = true;
-        }
-        if(bFloor && !aFloor) {
-          chunkA[size-1][x] = true;
-          if(size-2 >= 0) chunkA[size-2][x] = true;
-        }
-      }
-      this._integrateBorderOpening(chunkA, 'S');
-      this._integrateBorderOpening(chunkB, 'N');
-    }
-    else if(side === 'N') {
-      // chunkB is to the north of chunkA
-      ay0 = 0; ay1 = 0;
-      by0 = size-1; by1 = size-1;
-      ax0 = 0; ax1 = size-1;
-      bx0 = 0; bx1 = size-1;
-      for(let x = ax0; x <= ax1; x++) {
-        const aFloor = chunkA[ay0][x];
-        const bFloor = chunkB[by0][x];
-        if(aFloor && !bFloor) {
-          chunkB[by0][x] = true;
-          if(by0-1 >= 0) chunkB[by0-1][x] = true;
-        }
-        if(bFloor && !aFloor) {
-          chunkA[ay0][x] = true;
-          if(ay0+1 < size) chunkA[ay0+1][x] = true;
-        }
-      }
-      this._integrateBorderOpening(chunkA, 'N');
-      this._integrateBorderOpening(chunkB, 'S');
-    }
-  }
-
-  // Integrate newly carved border openings into the chunk's existing floor network with BFS
-  _integrateBorderOpening(chunk, openedSide) {
-    const size = this.chunkSize;
-    const visited = Array.from({length: size}, () => Array(size).fill(false));
-    const queue = [];
-    // Mark all original floor tiles as visited (to preserve them and use as targets)
-    // We consider "original" floor as those present before carving border openings.
-    // Here, as a heuristic, we'll mark any floor that is not on the border side we just opened as original.
-    // (This assumes border new openings were previously walls.)
-    if(openedSide === 'E') {
-      for(let y=0; y<size; y++) {
-        for(let x=0; x<size-2; x++) { // exclude far east columns
-          if(chunk[y][x]) visited[y][x] = true;
-        }
-      }
-    } else if(openedSide === 'W') {
-      for(let y=0; y<size; y++) {
-        for(let x=2; x<size; x++) { // exclude far west columns
-          if(chunk[y][x]) visited[y][x] = true;
-        }
-      }
-    } else if(openedSide === 'S') {
-      for(let y=0; y<size-2; y++) {
-        for(let x=0; x<size; x++) {
-          if(chunk[y][x]) visited[y][x] = true;
-        }
-      }
-    } else if(openedSide === 'N') {
-      for(let y=2; y<size; y++) {
-        for(let x=0; x<size; x++) {
-          if(chunk[y][x]) visited[y][x] = true;
-        }
-      }
-    }
-    // Enqueue all newly carved floor positions on the opened border as starting points
-    if(openedSide === 'E') {
-      const x = size-1;
-      const x2 = size-2;
-      for(let y=0; y<size; y++) {
-        if(chunk[y][x] || chunk[y][x2]) { // any floor in the last two columns
-          // If this position is floor and not visited, it's part of new opening
-          if(chunk[y][x] && !visited[y][x]) {
-            visited[y][x] = true;
-            queue.push({x: x, y: y, fromStart: true});
+  /**
+   * Соединяем свежесозданный чанк с уже существующими соседями
+   */
+  _connectWithNeighbors(cx, cy) {
+    const meKey = `${cx},${cy}`;
+    const me     = this.chunks.get(meKey).tiles;
+    const size   = this.chunkSize;
+    const dirs = [
+      {dx:-1,dy:0, meX:0, meY0:0, meY1:size-1, nbX:size-1, nbY0:0, nbY1:size-1}, // W
+      {dx: 1,dy:0, meX:size-1, meY0:0, meY1:size-1, nbX:0,   nbY0:0, nbY1:size-1}, // E
+      {dx:0, dy:-1, meY:0, meX0:0, meX1:size-1, nbY:size-1, nbX0:0, nbX1:size-1}, // N
+      {dx:0, dy: 1, meY:size-1, meX0:0, meX1:size-1, nbY:0,   nbX0:0, nbX1:size-1}  // S
+    ];
+    for(let d of dirs){
+      const nbKey = `${cx+d.dx},${cy+d.dy}`;
+      if(!this.chunks.has(nbKey)) continue;
+      const nb = this.chunks.get(nbKey).tiles;
+      if(d.dx!==0){
+        // соединяем вертикальные границы
+        for(let yy=d.meY0; yy<=d.meY1; yy++){
+          if(me[yy][d.meX] && !nb[yy][d.nbX]) {
+            nb[yy][d.nbX] = true;
           }
-          if(chunk[y][x2] && !visited[y][x2]) {
-            visited[y][x2] = true;
-            queue.push({x: x2, y: y, fromStart: true});
+          if(nb[yy][d.nbX] && !me[yy][d.meX]) {
+            me[yy][d.meX] = true;
           }
         }
-      }
-    } else if(openedSide === 'W') {
-      const x = 0;
-      const x2 = 1;
-      for(let y=0; y<size; y++) {
-        if(chunk[y][x] || chunk[y][x2]) {
-          if(chunk[y][x] && !visited[y][x]) {
-            visited[y][x] = true;
-            queue.push({x: x, y: y, fromStart: true});
+      } else {
+        // соединяем горизонтальные границы
+        for(let xx=d.meX0; xx<=d.meX1; xx++){
+          if(me[d.meY][xx] && !nb[d.nbY][xx]) {
+            nb[d.nbY][xx] = true;
           }
-          if(chunk[y][x2] && !visited[y][x2]) {
-            visited[y][x2] = true;
-            queue.push({x: x2, y: y, fromStart: true});
-          }
-        }
-      }
-    } else if(openedSide === 'S') {
-      const y = size-1;
-      const y2 = size-2;
-      for(let x=0; x<size; x++) {
-        if(chunk[y][x] || chunk[y2][x]) {
-          if(chunk[y][x] && !visited[y][x]) {
-            visited[y][x] = true;
-            queue.push({x: x, y: y, fromStart: true});
-          }
-          if(chunk[y2][x] && !visited[y2][x]) {
-            visited[y2][x] = true;
-            queue.push({x: x, y: y2, fromStart: true});
-          }
-        }
-      }
-    } else if(openedSide === 'N') {
-      const y = 0;
-      const y2 = 1;
-      for(let x=0; x<size; x++) {
-        if(chunk[y][x] || chunk[y2][x]) {
-          if(chunk[y][x] && !visited[y][x]) {
-            visited[y][x] = true;
-            queue.push({x: x, y: y, fromStart: true});
-          }
-          if(chunk[y2][x] && !visited[y2][x]) {
-            visited[y2][x] = true;
-            queue.push({x: x, y: y2, fromStart: true});
-          }
-        }
-      }
-    }
-    // BFS from new openings to reach original floor area and carve path through walls if needed
-    const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
-    let foundConnection = false;
-    while(queue.length > 0 && !foundConnection) {
-      const {x, y, fromStart} = queue.shift();
-      // If this tile is adjacent to an originally visited floor (target), we've connected
-      // Actually if it's fromStart (meaning it's part of stub region) and now adjacent to any original floor, we carve path.
-      if(fromStart) {
-        for(const d of dirs) {
-          const nx = x + d.dx, ny = y + d.dy;
-          if(nx >= 0 && nx < size && ny >= 0 && ny < size) {
-            if(visited[ny][nx] && chunk[ny][nx]) {
-              // neighbor is an original floor area (visited and was floor before)
-              foundConnection = true;
-              break;
-            }
-          }
-        }
-      }
-      if(foundConnection) break;
-      // Continue BFS
-      for(const d of dirs) {
-        const nx = x + d.dx, ny = y + d.dy;
-        if(nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
-        if(!visited[ny][nx]) {
-          visited[ny][nx] = true;
-          // If this neighbor is originally a wall (false in chunk) but we are reaching it, carve it
-          if(!chunk[ny][nx]) {
-            chunk[ny][nx] = true;
-            queue.push({x: nx, y: ny, fromStart: true});
-          } else {
-            // neighbor is floor (original labyrinth floor)
-            queue.push({x: nx, y: ny, fromStart: false});
+          if(nb[d.nbY][xx] && !me[d.meY][xx]) {
+            me[d.meY][xx] = true;
           }
         }
       }
     }
   }
 }
+
+// Делаем GameMap глобальным
+window.GameMap = GameMap;
