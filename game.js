@@ -1,191 +1,158 @@
-// game.js
+// Настройки размера карты
+const CHUNK_SIZE = 16;    // количество тайлов в одном чанке по каждой стороне
+const TILE_SIZE  = 10;    // размер тайла в пикселях (для отрисовки)
 
-// ——————————————
-//  Константы и Canvas
-// ——————————————
-const TILE_SIZE    = 32;           // размер тайла
-const MOVE_SPEED   = 3;            // тайлов/сек
-const FOV_ANGLE    = Math.PI/3;    // 60°
-const FOV_HALF     = FOV_ANGLE/2;
-const FOV_DIST     = 6;            // радиус видимости (тайлы)
-const FADE_RATE    = 1/4;          // затухание memoryAlpha за 4 сек
-const REGEN_PERIOD = 1.0;          // интервал пакетной перегенерации (сек)
-
+// Глобальные переменные игры
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
-let C_W, C_H;
-function onResize(){
-  C_W = canvas.width  = window.innerWidth;
-  C_H = canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', onResize);
-onResize();
 
-// ——————————————
-//  Игрок и ввод
-// ——————————————
-let player = { x:0, y:0, angle:0 };
-if (!window.Input) window.Input = { dx:0, dy:0 };
+// Объект игрока и начальная позиция
+const player = {
+    x: 0,   // глобальные координаты игрока по тайлам
+    y: 0,
+    chunkX: 0,  // координаты текущего чанка (изначально 0,0)
+    chunkY: 0
+};
 
-// ——————————————
-//  Инициализация карты
-// ——————————————
-const gameMap = new GameMap();
-gameMap.ensureChunk(0, 0);
-player.x = player.y = gameMap.chunkSize / 2;
-
-// таймер и набор для пакетной регенерации
-let lastTime   = performance.now();
-let regenTimer = 0;
-const toRegen  = new Set();
-
-// ——————————————
-//  Основной цикл
-// ——————————————
-function loop(now = performance.now()) {
-  const dt = (now - lastTime) / 1000;
-  lastTime = now;
-  regenTimer += dt;
-
-  // 0) Текущий чанк
-  const pcx = Math.floor(player.x / gameMap.chunkSize),
-        pcy = Math.floor(player.y / gameMap.chunkSize);
-
-  // 1) Предзагрузка в радиусе CHUNK_RADIUS чанков
-  const CHUNK_RADIUS = 2;   // 2 → 5×5 чанков
-  for (let dy = -CHUNK_RADIUS; dy <= CHUNK_RADIUS; dy++) {
-    for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx++) {
-      gameMap.ensureChunk(pcx + dx, pcy + dy);
+// Обработчик ввода (стрелки) для перемещения игрока
+window.addEventListener('keydown', (e) => {
+    let newX = player.x;
+    let newY = player.y;
+    if (e.key === 'ArrowUp')    newY = player.y - 1;
+    if (e.key === 'ArrowDown')  newY = player.y + 1;
+    if (e.key === 'ArrowLeft')  newX = player.x - 1;
+    if (e.key === 'ArrowRight') newX = player.x + 1;
+    // Проверяем границы перемещения (например, не уходим за допустимые значения, если есть)
+    // В данной игре мир генерируется бесконечно, поэтому специальных границ нет.
+    // Проверяем проходимость тайла: не стена ли?
+    const targetTile = map.getTile(newX, newY);
+    if (targetTile.type !== 'wall') {
+        // Двигаем игрока на новый тайл
+        player.x = newX;
+        player.y = newY;
+        // Обновляем текущий чанк игрока и генерируем новые чанки при необходимости
+        updateChunks();
     }
-  }
+});
 
-  // 2) Движение
-  let vx = Input.dx, vy = Input.dy;
-  const mag = Math.hypot(vx, vy) || 1;
-  vx /= mag; vy /= mag;
-  if (vx || vy) {
-    player.angle = Math.atan2(vy, vx);
-    const nx = player.x + vx * MOVE_SPEED * dt;
-    const ny = player.y + vy * MOVE_SPEED * dt;
-    if (gameMap.isFloor(Math.floor(nx), Math.floor(player.y))) player.x = nx;
-    if (gameMap.isFloor(Math.floor(player.x), Math.floor(ny))) player.y = ny;
-  }
+// Функция обновления видимых/загруженных чанков при смене чанка игроком
+function updateChunks() {
+    // Вычисляем текущие координаты чанка, в котором находится игрок, с учетом отрицательных координат
+    const newChunkX = Math.floor(player.x / CHUNK_SIZE);
+    const newChunkY = Math.floor(player.y / CHUNK_SIZE);
+    if (newChunkX === player.chunkX && newChunkY === player.chunkY) {
+        return; // игрок остался в том же чанке, новых генераций не требуется
+    }
+    // Сохранить старые координаты (не обязательно использовать, но может пригодиться для логов)
+    const oldChunkX = player.chunkX;
+    const oldChunkY = player.chunkY;
+    // Обновить текущий чанк игрока
+    player.chunkX = newChunkX;
+    player.chunkY = newChunkY;
 
-  // 3) FOV + память тайлов
-  const vis = computeFOV(player.x, player.y, player.angle);
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const cx  = pcx + dx, cy = pcy + dy;
-      const key = `${cx},${cy}`;
-      const chunk = gameMap.chunks.get(key);
-      const meta  = chunk.meta;
-      const baseX = cx * gameMap.chunkSize;
-      const baseY = cy * gameMap.chunkSize;
-      for (let y = 0; y < gameMap.chunkSize; y++) {
-        for (let x = 0; x < gameMap.chunkSize; x++) {
-          const gx = baseX + x, gy = baseY + y;
-          const coord = `${gx},${gy}`;
-          const cell  = meta[y][x];
-          if (vis.has(coord)) {
-            cell.visited     = true;
-            cell.memoryAlpha = 1;
-          } else if (cell.memoryAlpha > 0) {
-            cell.memoryAlpha = Math.max(0, cell.memoryAlpha - FADE_RATE * dt);
-            if (cell.memoryAlpha === 0) {
-              toRegen.add(key);
+    // Радиус генерации чанков вокруг игрока (по манхэттеновскому расстоянию от текущего)
+    const R = 2;  // например, генерируем 5x5 чанков вокруг (радиус 2)
+    
+    // Список новых чанков, которые нужно сгенерировать
+    const toGenerate = [];
+    for (let cx = player.chunkX - R; cx <= player.chunkX + R; cx++) {
+        for (let cy = player.chunkY - R; cy <= player.chunkY + R; cy++) {
+            const key = `${cx},${cy}`;
+            if (!map.chunks[key]) {
+                toGenerate.push([cx, cy]);
             }
-          }
         }
-      }
     }
-  }
-
-  // 4) Пакетная перегенерация с логами
-  if (regenTimer >= REGEN_PERIOD) {
-    regenTimer -= REGEN_PERIOD;
-    if (toRegen.size) {
-      console.log(">>> Пакет перегенерации:", Array.from(toRegen));
-      gameMap.regenerateChunksPreserveFOV(
-        toRegen,
-        computeFOV,
-        { x: player.x, y: player.y, angle: player.angle }
-      );
-      console.log(">>> После regen, ключи чанков:", Array.from(gameMap.chunks.keys()));
-      toRegen.clear();
+    // Логируем пакет генерации (для отладки)
+    if (toGenerate.length > 0) {
+        console.log(`>>> Пакет перегенерации: ${JSON.stringify(toGenerate.map(coord => coord.join(',')))}`);
     }
-  }
+    // Генерируем все необходимые новые чанки
+    toGenerate.forEach(([cx, cy]) => {
+        map.generateChunk(cx, cy);
+    });
 
-  // 5) Рендер
-  render();
-  requestAnimationFrame(loop);
+    // Удаляем чанки, которые вышли за пределы радиуса R (чтобы не накапливать лишние данные)
+    for (const key in map.chunks) {
+        const [cx, cy] = key.split(',').map(Number);
+        if (Math.abs(cx - player.chunkX) > R || Math.abs(cy - player.chunkY) > R) {
+            map.forgetChunk(cx, cy);
+        }
+    }
+
+    // Логируем результат после генерации/удаления (для отладки)
+    const currentKeys = Object.keys(map.chunks);
+    console.log(`>>> После regen, ключи чанков: (${currentKeys.length}) ${JSON.stringify(currentKeys)}`);
 }
 
-// ——————————————
-//  FOV (стены блокируют)
-// ——————————————
-function computeFOV(px, py, angle) {
-  const visible = new Set();
-  const steps = 64;
-  for (let i = 0; i <= steps; i++) {
-    const a  = angle - FOV_HALF + (i/steps)*FOV_ANGLE;
-    const dx = Math.cos(a), dy = Math.sin(a);
-    let dist = 0;
-    while (dist < FOV_DIST) {
-      const fx = px + dx*dist, fy = py + dy*dist;
-      const ix = Math.floor(fx), iy = Math.floor(fy);
-      if (ix<0||iy<0) break;
-      visible.add(`${ix},${iy}`);
-      if (!gameMap.isFloor(ix, iy)) break;
-      dist += 0.2;
+// Инициализация начальной области вокруг игрока
+(function initWorld() {
+    const R = 2;
+    const initialChunks = [];
+    for (let cx = player.chunkX - R; cx <= player.chunkX + R; cx++) {
+        for (let cy = player.chunkY - R; cy <= player.chunkY + R; cy++) {
+            initialChunks.push(`${cx},${cy}`);
+            map.generateChunk(cx, cy);
+        }
     }
-  }
-  return visible;
+    console.log(`>>> Пакет перегенерации: ${JSON.stringify(initialChunks)}`);
+    const loadedKeys = Object.keys(map.chunks);
+    console.log(`>>> После regen, ключи чанков: (${loadedKeys.length}) ${JSON.stringify(loadedKeys)}`);
+})();
+
+// Основной игровой цикл (обновление и отрисовка)
+function loop() {
+    // (Можно добавить обновление состояния монстров, расчёт FOV и др. механики здесь)
+    // Очищаем холст
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Отрисовка загруженных чанков (тайлы)
+    for (const key in map.chunks) {
+        const [cx, cy] = key.split(',').map(Number);
+        const chunk = map.chunks[key];
+        // Вычисляем смещение чанка на экране относительно игрока
+        // Центрируем камеру на игроке (игрок в центре экрана)
+        const offsetX = (cx * CHUNK_SIZE - player.x + 0.5) * TILE_SIZE + canvas.width / 2;
+        const offsetY = (cy * CHUNK_SIZE - player.y + 0.5) * TILE_SIZE + canvas.height / 2;
+        // Рисуем тайлы чанка
+        for (let ty = 0; ty < CHUNK_SIZE; ty++) {
+            for (let tx = 0; tx < CHUNK_SIZE; tx++) {
+                const tile = chunk.tiles[ty][tx];
+                // Определяем цвет тайла: пол (floor) – светлый, стена – тёмно-серый
+                if (tile.type === 'wall') {
+                    ctx.fillStyle = '#555555';
+                } else {
+                    ctx.fillStyle = '#CCCCCC';
+                }
+                // Координаты тайла на экране
+                const drawX = offsetX + tx * TILE_SIZE - (CHUNK_SIZE * TILE_SIZE) / 2;
+                const drawY = offsetY + ty * TILE_SIZE - (CHUNK_SIZE * TILE_SIZE) / 2;
+                ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+            }
+        }
+    }
+
+    // Отрисовка игрока (красный кружок)
+    ctx.fillStyle = '#FF0000';
+    // Игрок находится в центре своего текущего чанка при расчёте offset выше (0.5 добавлено для центрирования)
+    const playerScreenX = canvas.width / 2;
+    const playerScreenY = canvas.height / 2;
+    ctx.beginPath();
+    ctx.arc(playerScreenX, playerScreenY, TILE_SIZE / 2, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Отображение названия текущего региона (чанка) на экране
+    const playerChunkKey = `${player.chunkX},${player.chunkY}`;
+    if (map.chunks[playerChunkKey] && map.chunks[playerChunkKey].meta.name) {
+        const regionName = map.chunks[playerChunkKey].meta.name;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '16px sans-serif';
+        ctx.fillText(regionName, 10, canvas.height - 10);
+    }
+
+    requestAnimationFrame(loop);
 }
 
-// ——————————————
-//  Рендер
-// ——————————————
-function render() {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0,0,C_W,C_H);
-
-  ctx.save();
-  ctx.translate(C_W/2 - player.x*TILE_SIZE,
-                C_H/2 - player.y*TILE_SIZE);
-
-  const vis = computeFOV(player.x, player.y, player.angle);
-  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 1;
-  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 1;
-  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 1;
-  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 1;
-
-  for (let gy = minY; gy <= maxY; gy++) {
-    for (let gx = minX; gx <= maxX; gx++) {
-      if (gx<0||gy<0) continue;
-      const px = gx*TILE_SIZE, py = gy*TILE_SIZE;
-      const ck = `${Math.floor(gx/gameMap.chunkSize)},${Math.floor(gy/gameMap.chunkSize)}`;
-      if (!gameMap.chunks.has(ck)) continue;
-      const ch   = gameMap.chunks.get(ck);
-      const lx   = gx - Math.floor(gx/gameMap.chunkSize)*gameMap.chunkSize;
-      const ly   = gy - Math.floor(gy/gameMap.chunkSize)*gameMap.chunkSize;
-      const cell = ch.meta[ly][lx];
-      const α    = cell.memoryAlpha;
-      if (α <= 0) continue;
-      ctx.globalAlpha = α;
-      ctx.fillStyle   = ch.tiles[ly][lx] ? "#888" : "#444";
-      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-    }
-  }
-
-  // рисуем игрока
-  ctx.globalAlpha = 1;
-  ctx.fillStyle   = "#f00";
-  ctx.beginPath();
-  ctx.arc(player.x*TILE_SIZE, player.y*TILE_SIZE, TILE_SIZE*0.4, 0, Math.PI*2);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-// старт
+// Запуск игрового цикла
 requestAnimationFrame(loop);
