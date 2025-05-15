@@ -1,19 +1,23 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Forgotten Roguelike</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Shifting Labyrinth Game</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="gameContainer">
-    <canvas id="gameCanvas"></canvas>
-    <div id="joystickBase"><div id="joystickKnob"></div></div>
+  <!-- Canvas for game rendering -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Touch Joystick control -->
+  <div id="joystick">
+    <div id="joystick-knob"></div>
   </div>
-  <script src="map.js"    defer></script>
-  <script src="fov.js"    defer></script>
-  <script src="game.js"   defer></script>
-  <script src="controls.js" defer></script>
+
+  <!-- Game and control scripts -->
+  <script src="map.js"></script>
+  <script src="controls.js"></script>
+  <script src="game.js"></script>
 </body>
 </html>
