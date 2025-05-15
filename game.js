@@ -10,7 +10,6 @@ const FOV_HALF     = FOV_ANGLE/2;
 const FOV_DIST     = 6;            // радиус видимости (тайлы)
 const FADE_RATE    = 1/4;          // затухание memoryAlpha за 4 сек
 const REGEN_PERIOD = 1.0;          // интервал пакетной перегенерации (сек)
-const FORCED_RADIUS = 7;           // в тайлах — радиус насильственной предзагрузки
 
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
@@ -48,18 +47,15 @@ function loop(now = performance.now()) {
   lastTime = now;
   regenTimer += dt;
 
-  // 0) Текущие координаты чанка
+  // 0) Текущий чанк
   const pcx = Math.floor(player.x / gameMap.chunkSize),
         pcy = Math.floor(player.y / gameMap.chunkSize);
 
-  // 1) Насильственная предзагрузка всех чанков в радиусе FORCED_RADIUS тайлов
-  const minCX = Math.floor((player.x - FORCED_RADIUS) / gameMap.chunkSize);
-  const maxCX = Math.floor((player.x + FORCED_RADIUS) / gameMap.chunkSize);
-  const minCY = Math.floor((player.y - FORCED_RADIUS) / gameMap.chunkSize);
-  const maxCY = Math.floor((player.y + FORCED_RADIUS) / gameMap.chunkSize);
-  for (let cx = minCX; cx <= maxCX; cx++) {
-    for (let cy = minCY; cy <= maxCY; cy++) {
-      gameMap.ensureChunk(cx, cy);
+  // 1) Предзагрузка в радиусе CHUNK_RADIUS чанков
+  const CHUNK_RADIUS = 2;   // 2 → 5×5 чанков
+  for (let dy = -CHUNK_RADIUS; dy <= CHUNK_RADIUS; dy++) {
+    for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx++) {
+      gameMap.ensureChunk(pcx + dx, pcy + dy);
     }
   }
 
@@ -138,8 +134,7 @@ function computeFOV(px, py, angle) {
       const fx = px + dx*dist, fy = py + dy*dist;
       const ix = Math.floor(fx), iy = Math.floor(fy);
       if (ix<0||iy<0) break;
-      const key = `${ix},${iy}`;
-      visible.add(key);
+      visible.add(`${ix},${iy}`);
       if (!gameMap.isFloor(ix, iy)) break;
       dist += 0.2;
     }
