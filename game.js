@@ -1,5 +1,3 @@
-// game.js
-
 // ——————————————
 //  Константы и Canvas
 // ——————————————
@@ -78,6 +76,7 @@ function loop(now = performance.now()) {
       const cx  = pcx + dx, cy = pcy + dy;
       const key = `${cx},${cy}`;
       const chunk = gameMap.chunks.get(key);
+      if (!chunk) continue;
       const meta  = chunk.meta;
       const baseX = cx * gameMap.chunkSize;
       const baseY = cy * gameMap.chunkSize;
@@ -121,7 +120,7 @@ function loop(now = performance.now()) {
 }
 
 // ——————————————
-//  FOV (стены блокируют)
+//  FOV (стены блокируют; теперь без раннего break на ix<0||iy<0)
 // ——————————————
 function computeFOV(px, py, angle) {
   const visible = new Set();
@@ -133,8 +132,9 @@ function computeFOV(px, py, angle) {
     while (dist < FOV_DIST) {
       const fx = px + dx*dist, fy = py + dy*dist;
       const ix = Math.floor(fx), iy = Math.floor(fy);
-      if (ix<0||iy<0) break;
+      // сразу добавляем в видимые, даже если <0
       visible.add(`${ix},${iy}`);
+      // если стена (или вне пола) — останавливаем дальнейший луч
       if (!gameMap.isFloor(ix, iy)) break;
       dist += 0.2;
     }
@@ -143,7 +143,7 @@ function computeFOV(px, py, angle) {
 }
 
 // ——————————————
-//  Рендер
+//  Рендер (убран skip gx<0||gy<0)
 // ——————————————
 function render() {
   ctx.fillStyle = "#000";
@@ -161,7 +161,6 @@ function render() {
 
   for (let gy = minY; gy <= maxY; gy++) {
     for (let gx = minX; gx <= maxX; gx++) {
-      if (gx<0||gy<0) continue;
       const px = gx*TILE_SIZE, py = gy*TILE_SIZE;
       const ck = `${Math.floor(gx/gameMap.chunkSize)},${Math.floor(gy/gameMap.chunkSize)}`;
       if (!gameMap.chunks.has(ck)) continue;
