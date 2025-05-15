@@ -29,7 +29,7 @@ class GameMap {
       meta[y] = [];
       for (let x = 0; x < this.chunkSize; x++) {
         meta[y][x] = {
-          memoryAlpha: 0,   // насколько помнится (0..1)
+          memoryAlpha: 0,
           visited:     false
         };
       }
@@ -70,43 +70,45 @@ class GameMap {
   }
 
   /**
-   * Перегенерирует чанки из keys, сохраняя FOV-тайлы.
+   * Перегенерирует чанки из keys, сохраняя FOV-тайлы и все ещё не потухшие тайлы.
    * keys — Set<"cx,cy">.
    * computeFOV(x,y,angle) → Set<"gx,gy">.
    * player = {x,y,angle}.
    */
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
-    // вычисляем текущее FOV
     const vis = computeFOV(player.x, player.y, player.angle);
+
     for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
-      const stored = this.chunks.get(key);
-      if (!stored) continue;
+      const oldChunk  = this.chunks.get(key);
+      if (!oldChunk) continue;
 
-      // 1) сохраняем все тайлы в FOV внутри этого чанка
+      // 1) Сохраняем в стэш все tile/meta, где либо в FOV, либо memoryAlpha>0
       const stash = [];
       const baseX = cx * this.chunkSize;
       const baseY = cy * this.chunkSize;
-      for (let node of vis) {
-        const [gx, gy] = node.split(',').map(Number);
-        if (Math.floor(gx/this.chunkSize) === cx &&
-            Math.floor(gy/this.chunkSize) === cy) {
+      for (let gy = baseY; gy < baseY + this.chunkSize; gy++) {
+        for (let gx = baseX; gx < baseX + this.chunkSize; gx++) {
           const lx = gx - baseX, ly = gy - baseY;
-          stash.push({
-            lx, ly,
-            tile: stored.tiles[ly][lx],
-            meta: { ...stored.meta[ly][lx] }
-          });
+          const m   = oldChunk.meta[ly][lx];
+          const coord = `${gx},${gy}`;
+          if (vis.has(coord) || m.memoryAlpha > 0) {
+            stash.push({
+              lx, ly,
+              tile: oldChunk.tiles[ly][lx],
+              meta: { memoryAlpha: m.memoryAlpha, visited: m.visited }
+            });
+          }
         }
       }
 
-      // 2) полностью удаляем старый чанк
+      // 2) Удаляем старый чанк
       this.chunks.delete(key);
 
-      // 3) генерируем заново
+      // 3) Генерируем заново
       this.ensureChunk(cx, cy);
 
-      // 4) "залепляем" FOV-тайлы обратно
+      // 4) Восстанавливаем сохранённые tile/meta
       const fresh = this.chunks.get(key);
       for (let s of stash) {
         fresh.tiles[s.ly][s.lx] = s.tile;
@@ -119,9 +121,6 @@ class GameMap {
   // Внутренние функции
   // ————————
 
-  /**
-   * Объединяет новый чанк (cx,cy) с его четырьмя соседями, если они есть.
-   */
   _connectWithNeighbors(cx, cy) {
     const meKey = `${cx},${cy}`;
     const me    = this.chunks.get(meKey).tiles;
@@ -138,13 +137,11 @@ class GameMap {
       const nb = this.chunks.get(nbKey).tiles;
 
       if (d.dx !== 0) {
-        // вертикальная граница
         for (let y = d.meY0; y <= d.meY1; y++) {
           if (me[y][d.meX] && !nb[y][d.nbX]) nb[y][d.nbX] = true;
           if (nb[y][d.nbX] && !me[y][d.meX]) me[y][d.meX] = true;
         }
       } else {
-        // горизонтальная граница
         for (let x = d.meX0; x <= d.meX1; x++) {
           if (me[d.meY][x] && !nb[d.nbY][x]) nb[d.nbY][x] = true;
           if (nb[d.nbY][x] && !me[d.meY][x]) me[d.meY][x] = true;
@@ -153,16 +150,12 @@ class GameMap {
     }
   }
 
-  /**
-   * Создаёт одну новую сетку тайлов 32×32 по алгоритму лабиринта.
-   */
   _generateChunk(cx, cy) {
-    const N    = 11; // внутренняя сетка узлов
+    const N    = 11;
     const size = this.chunkSize;
-    // 1) инициализировать стены
     const grid = Array.from({length:size}, ()=>Array(size).fill(false));
 
-    // 2) carve spanning tree на сетке N×N
+    // carve spanning tree на N×N
     const conn    = Array.from({length:N}, ()=>Array.from({length:N}, ()=>({N:0,S:0,E:0,W:0})));
     const visited = Array.from({length:N}, ()=>Array(N).fill(false));
     const stack   = [{x:Math.floor(N/2), y:Math.floor(N/2)}];
@@ -183,30 +176,27 @@ class GameMap {
         if (d==='W') nx--;
         if (d==='E') nx++;
         conn[top.y][top.x][d] = 1;
-        const od = {'N':'S','S':'N','E':'W','W':'E'}[d];
-        conn[ny][nx][od]     = 1;
-        visited[ny][nx]      = true;
+        conn[ny][nx][{'N':'S','S':'N','E':'W','W':'E'}[d]] = 1;
+        visited[ny][nx] = true;
         stack.push({x:nx,y:ny});
       } else {
         stack.pop();
       }
     }
 
-    // 3) маппинг узлов в 3×3 блоки тайлов
+    // маппинг N×N в тайлы
     for (let j=0; j<N; j++) {
       for (let i=0; i<N; i++) {
         const bx = i*3, by = j*3;
-        // 2×2 пол
+        // 2×2
         grid[by][bx]     = true;
         grid[by][bx+1]   = true;
         grid[by+1][bx]   = true;
         grid[by+1][bx+1] = true;
-        // проход вправо
         if (conn[j][i].E) {
           grid[by][bx+2]   = true;
           grid[by+1][bx+2] = true;
         }
-        // проход вниз
         if (conn[j][i].S) {
           grid[by+2][bx]   = true;
           grid[by+2][bx+1] = true;
@@ -218,5 +208,4 @@ class GameMap {
   }
 }
 
-// Делаём GameMap доступным глобально
 window.GameMap = GameMap;
