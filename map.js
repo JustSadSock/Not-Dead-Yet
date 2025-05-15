@@ -8,8 +8,6 @@ class GameMap {
     this.chunkSize   = 32;           // размер чанка в тайлах
     this.chunks      = new Map();    // Map<"cx,cy", {tiles, meta}>
     this.generating  = new Set();    // чанки в процессе генерации
-    this.currentChunkX = null;
-    this.currentChunkY = null;
   }
 
   /**
@@ -58,29 +56,14 @@ class GameMap {
   }
 
   /**
-   * Забыть все чанки дальше чем в 1 чанке от (cx,cy).
-   */
-  forgetDistantChunks(cx, cy) {
-    for (let key of this.chunks.keys()) {
-      const [ccx, ccy] = key.split(',').map(Number);
-      if (Math.abs(ccx - cx) > 1 || Math.abs(ccy - cy) > 1) {
-        this.chunks.delete(key);
-      }
-    }
-  }
-
-  /**
    * Перегенерирует чанки из keys, сохраняя FOV-тайлы и все ещё не потухшие тайлы.
-   * keys — Set<"cx,cy">.
-   * computeFOV(x,y,angle) → Set<"gx,gy">.
-   * player = {x,y,angle}.
    */
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
     const vis = computeFOV(player.x, player.y, player.angle);
 
     for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
-      const oldChunk  = this.chunks.get(key);
+      const oldChunk = this.chunks.get(key);
       if (!oldChunk) continue;
 
       // 1) Сохраняем в стэш все tile/meta, где либо в FOV, либо memoryAlpha>0
