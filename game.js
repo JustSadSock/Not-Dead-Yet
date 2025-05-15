@@ -1,211 +1,171 @@
-// game.js
+// Game configuration
+const TILE_SIZE = 32;             // fixed pixel size of each tile
+const FOV_ANGLE = Math.PI / 3;    // 60 degrees field-of-view
+const FOV_HALF = FOV_ANGLE / 2;
+const FOV_DISTANCE = 6;          // 6 tiles forward visible
+const MOVE_SPEED = 3;            // player movement speed in tiles per second
 
-// ——————————————
-//  Параметры и холст
-// ——————————————
-var TILE_PX      = 27;    // размер тайла в пикселях
-var MOVE_SPEED   = 3;     // тайлов в секунду
-var FOG_FADE     = 0.5;   // размер уменьшения memoryAlpha в секунду
-var REGEN_PERIOD = 1.0;   // секунд между срабатываниями перегенерации
+// Game state
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let canvasWidth, canvasHeight;
+let playerX = 0, playerY = 0;    // player position in tile coordinates
+let playerAngle = 0;            // orientation (radians)
+let lastTime = null;
+let gameMap;
 
-var canvas = document.getElementById('gameCanvas');
-var ctx    = canvas.getContext('2d');
-var VIEW_W, VIEW_H;
-
-function onResize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-  VIEW_W = Math.ceil(canvas.width  / TILE_PX) + 1;
-  VIEW_H = Math.ceil(canvas.height / TILE_PX) + 1;
+// Resize canvas to window at fixed tile scale
+function resizeCanvas() {
+  canvasWidth = window.innerWidth;
+  canvasHeight = window.innerHeight;
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
 }
-window.addEventListener('resize', onResize);
-onResize();
+window.addEventListener('resize', resizeCanvas);
 
-// ——————————————
-//  Состояние игрока + ввод
-// ——————————————
-var player = {
-  x: CHUNK_W/2,
-  y: CHUNK_H/2,
-  angle: 0
-};
-
-var keyDir = { x: 0, y: 0 };
-// гарантируем, что joyDir всегда определён
-if (!window.joyDir) window.joyDir = { x: 0, y: 0 };
-
-window.addEventListener('keydown', function(e) {
-  if (e.key === 'w' || e.key === 'ArrowUp')    keyDir.y = -1;
-  if (e.key === 's' || e.key === 'ArrowDown')  keyDir.y = +1;
-  if (e.key === 'a' || e.key === 'ArrowLeft')  keyDir.x = -1;
-  if (e.key === 'd' || e.key === 'ArrowRight') keyDir.x = +1;
-});
-window.addEventListener('keyup', function(e) {
-  if (e.key === 'w' || e.key === 'ArrowUp')    keyDir.y = 0;
-  if (e.key === 's' || e.key === 'ArrowDown')  keyDir.y = 0;
-  if (e.key === 'a' || e.key === 'ArrowLeft')  keyDir.x = 0;
-  if (e.key === 'd' || e.key === 'ArrowRight') keyDir.x = 0;
-});
-
-// ——————————————
-//  FOV (Field of View) — конус в 60°
-// ——————————————
-function computeFOV(px, py, angle) {
-  var visible = new Set();
-  var R   = 10,
-      FOV = Math.PI / 3,
-      HALF = FOV/2,
-      STEPS = 64;
-
-  for (var i = 0; i <= STEPS; i++) {
-    var a  = angle - HALF + (i/STEPS)*FOV;
-    var dx = Math.cos(a), dy = Math.sin(a), dist = 0;
-    while (dist < R) {
-      var fx = px + dx*dist,
-          fy = py + dy*dist;
-      var ix = Math.floor(fx),
-          iy = Math.floor(fy);
-      // подгружаем чанк под этой клеткой
-      ensureChunk(Math.floor(ix/CHUNK_W), Math.floor(iy/CHUNK_H));
-      if (ix < 0 || iy < 0) break;
-      visible.add(ix + ',' + iy);
-      if (isWall(ix, iy)) break;
-      dist += 0.2;
-    }
-  }
-  return visible;
-}
-
-// ——————————————
-//  Троттл перегенерации
-// ——————————————
-var lastTime   = performance.now();
-var regenTimer = 0;
-var toRegen    = new Set();
-
-// ——————————————
-//  Главный игровой цикл
-// ——————————————
-function gameLoop(now) {
-  now = now || performance.now();
-  var dt = (now - lastTime) / 1000;
-  lastTime = now;
-  regenTimer += dt;
-
-  // 1) ДВИЖЕНИЕ + ПОВОРОТ
-  var vx = keyDir.x || window.joyDir.x,
-      vy = keyDir.y || window.joyDir.y;
-  var mag = Math.hypot(vx, vy) || 1;
-  vx /= mag; vy /= mag;
-  if (vx || vy) {
-    player.angle = Math.atan2(vy, vx);
-    var nx = player.x + vx * MOVE_SPEED * dt,
-        ny = player.y + vy * MOVE_SPEED * dt;
-    if (!isWall(Math.floor(nx), Math.floor(ny))) {
-      player.x = nx;
-      player.y = ny;
-    }
-  }
-
-  // 2) FOV + ЗАТУХАНИЕ ПАМЯТИ
-  var vis = computeFOV(player.x, player.y, player.angle);
-  var pcx = Math.floor(player.x / CHUNK_W),
-      pcy = Math.floor(player.y / CHUNK_H);
-
-  for (var dy = -1; dy <= 1; dy++) {
-    for (var dx = -1; dx <= 1; dx++) {
-      var cx = pcx + dx, cy = pcy + dy;
-      ensureChunk(cx, cy);
-      var chunk = worldChunks.get(cx + ',' + cy);
-      if (!chunk.meta) {
-        // инициализируем мета-данные при первой загрузке
-        chunk.meta = [];
-        for (var yy = 0; yy < CHUNK_H; yy++) {
-          chunk.meta[yy] = [];
-          for (var xx = 0; xx < CHUNK_W; xx++) {
-            chunk.meta[yy][xx] = {
-              type:        chunk.tiles[yy][xx],
-              memoryAlpha: 0,
-              visited:     false
-            };
-          }
-        }
-      }
-      var meta = chunk.meta,
-          ox   = cx * CHUNK_W,
-          oy   = cy * CHUNK_H;
-
-      for (var yy = 0; yy < CHUNK_H; yy++) {
-        for (var xx = 0; xx < CHUNK_W; xx++) {
-          var gx  = ox + xx,
-              gy  = oy + yy,
-              cell = meta[yy][xx],
-              key  = gx + ',' + gy;
-          if (vis.has(key)) {
-            cell.visited     = true;
-            cell.memoryAlpha = 1;
-          } else if (cell.memoryAlpha > 0) {
-            cell.memoryAlpha = Math.max(0, cell.memoryAlpha - FOG_FADE * dt);
-            if (cell.memoryAlpha === 0) {
-              toRegen.add(cx + ',' + cy);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // 3) ПЕРЕГЕНЕРАЦИЯ ЧАНКОВ (троттл)
-  if (regenTimer >= REGEN_PERIOD) {
-    regenTimer -= REGEN_PERIOD;
-    if (toRegen.size) {
-      regenerateChunksPreserveFOV(toRegen, computeFOV, player);
-      toRegen.clear();
-    }
-  }
-
-  // 4) РЕНДЕРИНГ
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.save();
-  // центрирование камеры
-  ctx.translate(
-    canvas.width/2  - player.x * TILE_PX,
-    canvas.height/2 - player.y * TILE_PX
-  );
-
-  var left   = Math.floor(player.x - VIEW_W/2),
-      top    = Math.floor(player.y - VIEW_H/2);
-
-  for (var yy = 0; yy < VIEW_H; yy++) {
-    for (var xx = 0; xx < VIEW_W; xx++) {
-      var gx = left + xx,
-          gy = top  + yy;
-      if (gx < 0 || gy < 0) continue;
-      var cx = Math.floor(gx/CHUNK_W),
-          cy = Math.floor(gy/CHUNK_H),
-          key = cx + ',' + cy;
-      if (!worldChunks.has(key)) continue;
-      var chunk = worldChunks.get(key),
-          meta  = chunk.meta;
-      var lx = ((gx % CHUNK_W) + CHUNK_W) % CHUNK_W,
-          ly = ((gy % CHUNK_H) + CHUNK_H) % CHUNK_H;
-      var cell = meta[ly][lx];
-      ctx.globalAlpha = cell.memoryAlpha;
-      ctx.fillStyle   = (cell.type === WALL ? '#333' : '#888');
-      ctx.fillRect(gx * TILE_PX, gy * TILE_PX, TILE_PX, TILE_PX);
-    }
-  }
-
-  // рисуем игрока
-  ctx.globalAlpha = 1;
-  ctx.fillStyle   = 'red';
-  ctx.beginPath();
-  ctx.arc(player.x * TILE_PX, player.y * TILE_PX, TILE_PX*0.4, 0, Math.PI*2);
-  ctx.fill();
-
-  ctx.restore();
+// Initialize game
+function initGame() {
+  resizeCanvas();
+  // Center player in initial chunk (0,0) at roughly middle of chunk
+  playerX = 0;
+  playerY = 0;
+  // Create map and initial chunk
+  gameMap = new GameMap();
+  gameMap.ensureChunk(0, 0); // generate starting chunk
+  // Place player at the center of chunk (for safety in open space)
+  const center = gameMap.chunkSize/2;
+  playerX = center;
+  playerY = center;
+  playerAngle = 0;
+  // Start game loop
+  lastTime = performance.now();
   requestAnimationFrame(gameLoop);
 }
 
-// стартуем цикл
-requestAnimationFrame(gameLoop);
+// Game loop
+function gameLoop(timestamp) {
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
+  update(dt);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// Update game state (player movement, chunk generation)
+function update(dt) {
+  // Update player position by input
+  const dx = Input.dx;
+  const dy = Input.dy;
+  if(dx !== 0 || dy !== 0) {
+    // Update orientation toward movement direction
+    playerAngle = Math.atan2(dy, dx);
+    // Calculate movement vector normalized
+    let mvx = dx, mvy = dy;
+    const mag = Math.hypot(mvx, mvy);
+    if(mag > 0) {
+      mvx /= mag;
+      mvy /= mag;
+    }
+    const step = MOVE_SPEED * dt;
+    const newX = playerX + mvx * step;
+    const newY = playerY + mvy * step;
+    // Collision detection against walls
+    const curTileX = Math.floor(playerX);
+    const curTileY = Math.floor(playerY);
+    const newTileX = Math.floor(newX);
+    const newTileY = Math.floor(newY);
+    // Check tile collisions
+    let moveX = false, moveY = false;
+    if(gameMap.isFloor(newTileX, curTileY)) { // horizontal movement OK
+      moveX = true;
+    }
+    if(gameMap.isFloor(curTileX, newTileY)) { // vertical movement OK
+      moveY = true;
+    }
+    if(moveX && moveY) {
+      // If diagonal move, ensure target tile is not a blocking corner
+      if(gameMap.isFloor(newTileX, newTileY)) {
+        playerX = newX;
+        playerY = newY;
+      } else {
+        // corner blocked: move only in allowed axis
+        playerX = moveX ? newX : playerX;
+        playerY = moveY ? newY : playerY;
+      }
+    } else {
+      // move only in allowed axis
+      if(moveX) playerX = newX;
+      if(moveY) playerY = newY;
+    }
+  }
+  // Determine current chunk coordinates
+  const cx = Math.floor(playerX / gameMap.chunkSize);
+  const cy = Math.floor(playerY / gameMap.chunkSize);
+  // Generate neighboring chunks when near borders
+  const localX = playerX - cx * gameMap.chunkSize;
+  const localY = playerY - cy * gameMap.chunkSize;
+  const thresh = 3;
+  if(localX < thresh) gameMap.ensureChunk(cx - 1, cy);
+  if(localX > gameMap.chunkSize - thresh) gameMap.ensureChunk(cx + 1, cy);
+  if(localY < thresh) gameMap.ensureChunk(cx, cy - 1);
+  if(localY > gameMap.chunkSize - thresh) gameMap.ensureChunk(cx, cy + 1);
+  // If player changed chunk, remove far chunks (forgetting)
+  if(gameMap.currentChunkX !== cx || gameMap.currentChunkY !== cy) {
+    gameMap.currentChunkX = cx;
+    gameMap.currentChunkY = cy;
+    gameMap.forgetDistantChunks(cx, cy);
+  }
+}
+
+// Render visible game area
+function render() {
+  // Clear screen to black
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  // Determine drawing range in world coordinates (tile indices)
+  const halfScreenTilesX = Math.ceil(canvasWidth / TILE_SIZE / 2) + 1;
+  const halfScreenTilesY = Math.ceil(canvasHeight / TILE_SIZE / 2) + 1;
+  const minTileX = Math.floor(playerX) - halfScreenTilesX;
+  const maxTileX = Math.floor(playerX) + halfScreenTilesX;
+  const minTileY = Math.floor(playerY) - halfScreenTilesY;
+  const maxTileY = Math.floor(playerY) + halfScreenTilesY;
+  // Draw floor tiles within view range
+  for(let ty = minTileY; ty <= maxTileY; ty++) {
+    for(let tx = minTileX; tx <= maxTileX; tx++) {
+      if(!gameMap.isFloor(tx, ty)) continue; // skip walls
+      // Compute distance and angle from player to tile center
+      const dx = (tx + 0.5) - playerX;
+      const dy = (ty + 0.5) - playerY;
+      const dist = Math.hypot(dx, dy);
+      if(dist > FOV_DISTANCE + 0.5) continue; // beyond visible range
+      // Check if within FOV angle
+      let angleToTile = Math.atan2(dy, dx);
+      // Normalize angle difference
+      let diff = angleToTile - playerAngle;
+      while(diff > Math.PI) diff -= 2*Math.PI;
+      while(diff < -Math.PI) diff += 2*Math.PI;
+      if(Math.abs(diff) > FOV_HALF) continue; // outside view cone
+      // Calculate brightness (linear fade with distance)
+      let brightness = 1 - (dist / FOV_DISTANCE);
+      if(brightness < 0) brightness = 0;
+      // Base grey level (max brightness ~ 160 out of 255)
+      const shade = Math.floor(160 * brightness);
+      ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+      // Compute screen position
+      const screenX = (tx * TILE_SIZE - playerX * TILE_SIZE) + canvasWidth/2;
+      const screenY = (ty * TILE_SIZE - playerY * TILE_SIZE) + canvasHeight/2;
+      ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+    }
+  }
+  // Draw player as a red circle
+  const playerScreenX = canvasWidth/2;
+  const playerScreenY = canvasHeight/2;
+  ctx.fillStyle = "#f00";
+  const radius = TILE_SIZE * 0.3;
+  ctx.beginPath();
+  ctx.arc(playerScreenX, playerScreenY, radius, 0, 2*Math.PI);
+  ctx.fill();
+}
+
+// Start the game when page is loaded
+window.addEventListener('load', initGame);
