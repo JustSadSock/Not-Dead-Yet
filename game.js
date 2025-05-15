@@ -10,6 +10,7 @@ const FOV_HALF     = FOV_ANGLE/2;
 const FOV_DIST     = 6;            // радиус видимости (тайлы)
 const FADE_RATE    = 1/4;          // затухание memoryAlpha за 4 сек
 const REGEN_PERIOD = 1.0;          // интервал пакетной перегенерации (сек)
+const FORCED_RADIUS = 7;           // в тайлах — радиус насильственной предзагрузки
 
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
@@ -47,14 +48,18 @@ function loop(now = performance.now()) {
   lastTime = now;
   regenTimer += dt;
 
-  // 0) Считаем текущий чанк
+  // 0) Текущие координаты чанка
   const pcx = Math.floor(player.x / gameMap.chunkSize),
         pcy = Math.floor(player.y / gameMap.chunkSize);
 
-  // 1) Расширенная предзагрузка: 5×5 чанков вокруг
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
-      gameMap.ensureChunk(pcx + dx, pcy + dy);
+  // 1) Насильственная предзагрузка всех чанков в радиусе FORCED_RADIUS тайлов
+  const minCX = Math.floor((player.x - FORCED_RADIUS) / gameMap.chunkSize);
+  const maxCX = Math.floor((player.x + FORCED_RADIUS) / gameMap.chunkSize);
+  const minCY = Math.floor((player.y - FORCED_RADIUS) / gameMap.chunkSize);
+  const maxCY = Math.floor((player.y + FORCED_RADIUS) / gameMap.chunkSize);
+  for (let cx = minCX; cx <= maxCX; cx++) {
+    for (let cy = minCY; cy <= maxCY; cy++) {
+      gameMap.ensureChunk(cx, cy);
     }
   }
 
@@ -70,12 +75,12 @@ function loop(now = performance.now()) {
     if (gameMap.isFloor(Math.floor(player.x), Math.floor(ny))) player.y = ny;
   }
 
-  // 3) FOV и память тайлов
+  // 3) FOV + память тайлов
   const vis = computeFOV(player.x, player.y, player.angle);
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
-      const cx = pcx + dx, cy = pcy + dy;
-      const key   = `${cx},${cy}`;
+      const cx  = pcx + dx, cy = pcy + dy;
+      const key = `${cx},${cy}`;
       const chunk = gameMap.chunks.get(key);
       const meta  = chunk.meta;
       const baseX = cx * gameMap.chunkSize;
@@ -154,10 +159,10 @@ function render() {
                 C_H/2 - player.y*TILE_SIZE);
 
   const vis = computeFOV(player.x, player.y, player.angle);
-  const minX = Math.floor(player.x - C_W/TILE_SIZE/2)-1;
-  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2)+1;
-  const minY = Math.floor(player.y - C_H/TILE_SIZE/2)-1;
-  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2)+1;
+  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 1;
+  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 1;
+  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 1;
+  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 1;
 
   for (let gy = minY; gy <= maxY; gy++) {
     for (let gx = minX; gx <= maxX; gx++) {
