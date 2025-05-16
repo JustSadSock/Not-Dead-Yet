@@ -3,17 +3,16 @@
 // Применение всех правил к «сырой» сетке комнат:
 // — вырезаем коридоры (hall) 2–3 клеток толщины,
 // — ставим двери (door) 1–2 клетки на границах room ↔ hall,
-// — валидация дверей: каждая door должна быть:
+// — первичная валидация дверей: каждая door должна быть:
+//     • не более одной соседней door,
 //     • ровно с одной соседней room,
 //     • ровно с одной соседней hall,
-//     • и с одним или двумя соседними wall,
-//     • и **без** соседства с другими door,
-// — гарантируем, что каждый hall ведёт хотя бы в одну комнату,
+//     • и с одной или двумя соседними wall,
+// — гарантируем, что каждый hall ведёт хотя бы в одну room,
 // — удаляем hall, не ведущие ни к одной room,
-// — гарантируем, что каждая комната имеет 1–3 двери и минимум одну полностью закрытую стену,
-// — запрет прямых соприкосновений room↔hall без двери:
-//     если boundary room→hall встречается, а на этой стороне <2 дверей → door,
-//     иначе → стена.
+// — гарантируем, что каждая комната имеет 1–3 дверей и минимум одну полностью закрытую стену,
+// — запрет прямого соприкосновения room↔hall без двери (макс 2 двери на сторону),
+// — **новое**: каждая door, у которой нет соседей hall, получает хотя бы один hall-выход.
 
 import { buildRawChunk } from './generator.js';
 
@@ -60,7 +59,7 @@ export function applyRules(rawTiles, S) {
     for (const [x,y] of r.cells) tiles[y][x] = 'room';
   }
 
-  // 3) готовим структуру дверей комнаты
+  // 3) вспомогательные структуры
   const roomDoors = rooms.map(() => []);
   const sideOffsets = { N:[0,-1], S:[0,1], W:[-1,0], E:[1,0] };
 
@@ -117,7 +116,7 @@ export function applyRules(rawTiles, S) {
     }
   }
 
-  // 7) удаляем «висячие» hall
+  // 7) удаление hall, не ведущих в room
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       if (tiles[y][x] === 'hall') {
@@ -129,7 +128,7 @@ export function applyRules(rawTiles, S) {
     }
   }
 
-  // 8) первичная валидация дверей (без соседства door)
+  // 8) первичная валидация дверей
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       if (tiles[y][x] !== 'door') continue;
@@ -141,13 +140,14 @@ export function applyRules(rawTiles, S) {
         else if (t==='hall')  nHall++;
         else                nWall++;
       }
-      if (!(nDoor===0 && nRoom===1 && nHall===1 && (nWall===1 || nWall===2))) {
+      // теперь разрешаем до 1 соседней door вместо 0
+      if (!(nDoor <= 1 && nRoom === 1 && nHall === 1 && (nWall === 1 || nWall === 2))) {
         tiles[y][x] = 'wall';
       }
     }
   }
 
-  // 9) запрет room↔hall без door: если boundary встречается и <2 дверей → ставим door
+  // 9) запрет прямого соприкосновения room↔hall без двери
   rooms.forEach((r, i) => {
     const countBySide = { N:0, S:0, W:0, E:0 };
     roomDoors[i].forEach(d => countBySide[d.side]++);
@@ -165,22 +165,22 @@ export function applyRules(rawTiles, S) {
         side==='N'||side==='S' ? a[0]-b[0] : a[1]-b[1]
       );
       let slots = MAX - countBySide[side];
-      // возьмём до slots соседних
       const take = [];
       for (let k = 0; k < boundary.length && slots > 0; k++) {
         const [cx,cy] = boundary[k];
         if (take.length === 0 ||
             (side==='N'||side==='S'
-              ? Math.abs(take[take.length-1][0]-cx)===1
-              : Math.abs(take[take.length-1][1]-cy)===1)
+              ? Math.abs(take[take.length-1][0] - cx) === 1
+              : Math.abs(take[take.length-1][1] - cy) === 1)
         ) {
           take.push([cx,cy]);
           slots--;
         }
       }
       for (const [cx,cy] of boundary) {
-        const nx = cx+dx, ny = cy+dy;
-        if (take.some(t => t[0]===cx && t[1]===cy)) {
+        const nx = cx + sideOffsets[side][0],
+              ny = cy + sideOffsets[side][1];
+        if (take.some(t => t[0] === cx && t[1] === cy)) {
           tiles[ny][nx] = 'door';
         } else {
           tiles[ny][nx] = 'wall';
@@ -189,17 +189,40 @@ export function applyRules(rawTiles, S) {
     }
   });
 
+  // 10) Гарантируем: каждая door соседствует хотя бы с одним hall
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      if (tiles[y][x] !== 'door') continue;
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+      const nHall = neigh.filter(([dx,dy]) =>
+        tiles[y+dy]?.[x+dx] === 'hall'
+      ).length;
+      if (nHall === 0) {
+        // ищем соседнюю room, чтобы знать направление
+        const roomDir = neigh.find(([dx,dy]) =>
+          tiles[y+dy]?.[x+dx] === 'room'
+        );
+        if (roomDir) {
+          const [dx,dy] = roomDir;
+          const ox = -dx, oy = -dy;
+          const hx = x + ox, hy = y + oy;
+          if (hx >= 0 && hy >= 0 && hx < S && hy < S && tiles[hy][hx] === 'wall') {
+            tiles[hy][hx] = 'hall';
+          }
+        }
+      }
+    }
+  }
+
   return tiles;
 }
 
 
-// ────────────────────────────────────────────────
+// ─────────────────────────────────
 //  вспомогательные
-// ────────────────────────────────────────────────
+// ─────────────────────────────────
 
-/** вырез L-образного коридора толщиной 2–3 */
 function carveCorridor(tiles, x1,y1,x2,y2) {
-  const S = tiles.length;
   const W = 2 + Math.floor(Math.random()*2);
   if (Math.random()<0.5) {
     const xa=Math.min(x1,x2), xb=Math.max(x1,x2), y0=y1-((W/2)|0);
@@ -222,10 +245,9 @@ function carveCorridor(tiles, x1,y1,x2,y2) {
   }
 }
 
-/** тасование Fisher–Yates */
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random()*(i+1));
-    [arr[i],arr[j]] = [arr[j],arr[i]];
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
