@@ -1,5 +1,5 @@
 // map/validator.js
-
+console.log('validator.applyRules called');
 import { findRooms }       from './validator/rooms.js';
 import { placeAndValidateDoors } from './validator/doors.js';
 import { carveAllCorridors }     from './validator/corridors.js';
