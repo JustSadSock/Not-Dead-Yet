@@ -1,180 +1,262 @@
 // map.js
-// ------------------------------------------------------------
-// Чанковая карта (32 × 32 тайла на чанк) c «забыванием» тайлов.
-// Типы тайлов:
-//   false          — стена
-//   'corridor'     — коридор 2 клетки шириной
-//   'room'         — пол комнаты (4×4 … 8×8)
-//   'door'         — дверной проём (1-2 клетки)
-// ------------------------------------------------------------
+
+/**
+ * GameMap — чанковая карта с регенерацией забытых тайлов.
+ */
 class GameMap {
-  constructor(chunkSize = 32) {
-    this.chunkSize = chunkSize;
-    this.chunks    = new Map();   // Map<"cx,cy", {tiles, meta}>
-    this.inProcess = new Set();   // чтобы не генерировать дубли
-  }
+  constructor() {
+    // размер одного чанка (в тайлах) — должен совпадать с game.js.chunkSize
+    this.chunkSize   = 32;
 
-  /* ---------- публичные методы --------------------------- */
+    // храним чанки: Map<"cx,cy", {tiles: number[][], meta: {memoryAlpha,visited}[][]}>
+    this.chunks      = new Map();
 
-  /** гарантируем, что чанк (cx,cy) существует */
-  ensureChunk(cx, cy) {
-    const key = `${cx},${cy}`;
-    if (this.chunks.has(key) || this.inProcess.has(key)) return;
-
-    this.inProcess.add(key);
-    const tiles = this._generateChunk();           // Boolean | 'corridor' | 'room' | 'door'
-
-    const meta = Array.from({length:this.chunkSize}, () =>
-      Array.from({length:this.chunkSize}, () => ({memoryAlpha:0, visited:false}))
-    );
-
-    this.chunks.set(key, {tiles, meta});
-    this.inProcess.delete(key);
-  }
-
-  /** true, если в глобальных координатах (gx,gy) можно ходить */
-  isFloor(gx, gy) {
-    const cx=Math.floor(gx/this.chunkSize),
-          cy=Math.floor(gy/this.chunkSize);
-    const ch=this.chunks.get(`${cx},${cy}`); if(!ch) return false;
-    const lx=gx-cx*this.chunkSize, ly=gy-cy*this.chunkSize;
-    if (lx<0||ly<0||lx>=this.chunkSize||ly>=this.chunkSize) return false;
-    const t = ch.tiles[ly][lx];
-    return t==='corridor'||t==='room'||t==='door';
+    // чтобы не генерировать один и тот же чанк дважды параллельно
+    this.generating  = new Set();
   }
 
   /**
-   * Перегенерация чанков (ключи в keys) с сохранением FOV и затухающей памяти.
+   * Убедиться, что чанк (cx,cy) есть в this.chunks.
+   * Если нет — сгенерировать сразу tiles и meta.
    */
-  regenerateChunksPreserveFOV(keys, computeFOV, player){
+  ensureChunk(cx, cy) {
+    const key = `${cx},${cy}`;
+    if (this.chunks.has(key) || this.generating.has(key)) return;
+    this.generating.add(key);
+
+    // 1) Генерим саму сетку пола/стен с комнатами и коридорами
+    const tiles = this._generateChunk(cx, cy);
+
+    // 2) Создаём пустой meta-массив с memoryAlpha=0, visited=false
+    const meta = Array.from({ length: this.chunkSize }, () =>
+      Array.from({ length: this.chunkSize }, () => ({
+        memoryAlpha: 0,
+        visited:     false
+      }))
+    );
+
+    // 3) Сохраняем
+    this.chunks.set(key, { tiles, meta });
+    this.generating.delete(key);
+  }
+
+  /**
+   * Проверка, можно ли ходить по глобальным координатам (gx,gy).
+   * Возвращает true, если внутри чанка и tiles[ly][lx] != 0 (пол или дверь).
+   */
+  isFloor(gx, gy) {
+    const cx = Math.floor(gx / this.chunkSize);
+    const cy = Math.floor(gy / this.chunkSize);
+    const key = `${cx},${cy}`;
+    const chunk = this.chunks.get(key);
+    if (!chunk) return false;
+    const lx = gx - cx * this.chunkSize;
+    const ly = gy - cy * this.chunkSize;
+    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) return false;
+    return chunk.tiles[ly][lx] !== 0;
+  }
+
+  /**
+   * Пакетная перегенерация чанков:
+   * сохраняем все тайлы и meta, где либо в FOV, либо memoryAlpha>0,
+   * удаляем старый чанк, генерим новый, возвращаем сохранённые квадратики.
+   */
+  regenerateChunksPreserveFOV(keys, computeFOV, player) {
+    // сначала FOV текущей позиции
     const vis = computeFOV(player.x, player.y, player.angle);
 
-    for(const key of keys){
-      const old = this.chunks.get(key); if(!old) continue;
+    for (let key of keys) {
+      const [cx, cy] = key.split(',').map(Number);
+      const oldChunk = this.chunks.get(key);
+      if (!oldChunk) continue;
 
-      // --- сохраняем «видимые» или не погасшие
-      const stash=[];
-      const [cx,cy] = key.split(',').map(Number);
-      const bx=cx*this.chunkSize, by=cy*this.chunkSize;
-
-      for(let ly=0;ly<this.chunkSize;ly++){
-        for(let lx=0;lx<this.chunkSize;lx++){
-          const gx=bx+lx, gy=by+ly, m=old.meta[ly][lx];
-          if (vis.has(`${gx},${gy}`) || m.memoryAlpha>0){
-            stash.push({lx,ly, tile:old.tiles[ly][lx], meta:{...m}});
+      // 1) стэшируем все "видимые" или "ещё не потухшие" квадратики
+      const stash = [];
+      const baseX = cx * this.chunkSize;
+      const baseY = cy * this.chunkSize;
+      for (let ly = 0; ly < this.chunkSize; ly++) {
+        for (let lx = 0; lx < this.chunkSize; lx++) {
+          const gx = baseX + lx, gy = baseY + ly;
+          const m   = oldChunk.meta[ly][lx];
+          const coord = `${gx},${gy}`;
+          if (vis.has(coord) || m.memoryAlpha > 0) {
+            stash.push({
+              lx, ly,
+              tile: oldChunk.tiles[ly][lx],
+              meta: { memoryAlpha: m.memoryAlpha, visited: m.visited }
+            });
           }
         }
       }
 
-      // --- генерим заново и возвращаем stash
+      // 2) удаляем старый
       this.chunks.delete(key);
-      this.ensureChunk(cx,cy);
-      const fresh=this.chunks.get(key);
-      for(const s of stash){
-        fresh.tiles[s.ly][s.lx]=s.tile;
-        fresh.meta [s.ly][s.lx]=s.meta;
+
+      // 3) генерим снова
+      this.ensureChunk(cx, cy);
+
+      // 4) возвращаем сохранённые квадратики
+      const fresh = this.chunks.get(key);
+      for (let s of stash) {
+        fresh.tiles[s.ly][s.lx] = s.tile;
+        fresh.meta [s.ly][s.lx] = s.meta;
       }
     }
   }
 
-  /* ========================================================
-                 ВНУТРЕННЯЯ   ГЕНЕРАЦИЯ   ЧАНКА
-     ======================================================== */
-  _generateChunk(){
-    const S = this.chunkSize;                       // 32
-    const g = Array.from({length:S},()=>Array(S).fill(false));
+  /**
+   * Процедурная генерация одного чанка cx,cy:
+   * — строим лабиринт с коридорами и размещаем комнаты.
+   * Возвращает Number[][] размером chunkSize×chunkSize с кодами тайлов:
+   *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
+   */
+  _generateChunk(cx, cy) {
+    const S    = this.chunkSize;
+    // Инициализируем все стены (0)
+    const tiles = Array.from({ length: S }, () => Array(S).fill(0));
 
-    /* ===== 1. лабиринт-скелет (11×11, spanning-tree) ===== */
-    const N=11;
-    const conn = Array.from({length:N},()=>Array.from({length:N},()=>
-      ({N:0,S:0,E:0,W:0}))
-    );
-    const vis  = Array.from({length:N},()=>Array(N).fill(false));
-    const stack=[{x:N>>1, y:N>>1}];
-    vis[stack[0].y][stack[0].x]=true;
-
-    while(stack.length){
-      const {x,y}=stack.at(-1);
-      const nb=[];
-      if(y>0   && !vis[y-1][x]) nb.push('N');
-      if(y<N-1 && !vis[y+1][x]) nb.push('S');
-      if(x>0   && !vis[y][x-1]) nb.push('W');
-      if(x<N-1 && !vis[y][x+1]) nb.push('E');
-
-      if(nb.length){
-        const d=nb[Math.random()*nb.length|0];
-        let nx=x,ny=y;
-        if(d==='N') ny--; if(d==='S') ny++;
-        if(d==='W') nx--; if(d==='E') nx++;
-        conn[y][x][d]=1;
-        conn[ny][nx][{N:'S',S:'N',E:'W',W:'E'}[d]]=1;
-        vis[ny][nx]=true;
-        stack.push({x:nx,y:ny});
-      }else stack.pop();
-    }
-
-    /* helper безопасной записи ---------------------------------- */
-    const set=(x,y,val)=>{
-      if(x<0||y<0||x>=S||y>=S) return;
-      g[y][x]=val;
-    };
-
-    /* ===== 2. комнаты ========================================= */
-    const MIN=4, MAX=8;
-    const want = 3 + (Math.random()*5|0);   // 3–7
-    let made=0, tries=0;
-    while(made<want && tries<120){
-      tries++;
-      const w = MIN + (Math.random()*(MAX-MIN)|0);
-      const h = MIN + (Math.random()*(MAX-MIN)|0);
-      const gx0 = 1 + (Math.random()*(S-w-2)|0);
-      const gy0 = 1 + (Math.random()*(S-h-2)|0);
-
-      // запрет перекрытия
-      let ok=true;
-      for(let y=gy0-1;y<=gy0+h;y++)
-        for(let x=gx0-1;x<=gx0+w;x++)
-          if(g[y][x]) ok=false;
-      if(!ok) continue;
-
-      // заполнение room
-      for(let y=gy0;y<gy0+h;y++)
-        for(let x=gx0;x<gx0+w;x++) set(x,y,'room');
-
-      // двери
-      const area=w*h, mindoor=area>16?2:1;
-      const doors=mindoor+(Math.random()*2|0);         // 1–3 двери
-      for(let d=0;d<doors;d++){
-        const side=Math.random()*4|0;
-        const len = 1 + (Math.random()>0.6?1:0);       // 1-2 тайла
-        let ox,oy,dx=0,dy=0;
-        if(side===0){ ox=gx0+(Math.random()*w|0); oy=gy0-1; dy=-1; }
-        if(side===1){ ox=gx0+(Math.random()*w|0); oy=gy0+h; dy= 1; }
-        if(side===2){ ox=gx0-1; oy=gy0+(Math.random()*h|0); dx=-1; }
-        if(side===3){ ox=gx0+w; oy=gy0+(Math.random()*h|0); dx= 1; }
-        for(let k=0;k<len;k++) set(ox+dx*k, oy+dy*k, 'door');
-      }
-      made++;
-    }
-
-    /* ===== 3. переносим лабиринт-коридор (ширина 2) =========== */
-    for(let j=0;j<N;j++){
-      for(let i=0;i<N;i++){
-        const bx=i*3, by=j*3;
-        // центр клетки лабиринта → 2×2 коридор
-        for(let dy=0;dy<2;dy++)
-          for(let dx=0;dx<2;dx++)
-            if(!g[by+dy][bx+dx]) g[by+dy][bx+dx]='corridor';
-
-        const c=conn[j][i];
-        if(c.E){ set(bx+2,by,'corridor'); set(bx+2,by+1,'corridor'); }
-        if(c.S){ set(bx,by+2,'corridor'); set(bx+1,by+2,'corridor'); }
+    // 1) Генерим коридоры: используем блочную решетку N×N и случайную расстановку центров
+    const block = 4;
+    const N = Math.floor(S / block);  // ожидаем 32/4 = 8
+    // Решетка наличия центральной клетки коридора
+    const hasCenter = Array.from({ length: N }, () => Array(N).fill(false));
+    for (let ry = 0; ry < N; ry++) {
+      for (let cx2 = 0; cx2 < N; cx2++) {
+        // С вероятностью ~0.5 делаем центральную точку коридора
+        hasCenter[ry][cx2] = (Math.random() < 0.5);
       }
     }
+    // Если в центральной строке нет ни одной центральной точки, создадим её по центру
+    const midRow = Math.floor(N/2);
+    let anyMid = false;
+    for (let c2 = 0; c2 < N; c2++) {
+      if (hasCenter[midRow][c2]) { anyMid = true; break; }
+    }
+    if (!anyMid) {
+      hasCenter[midRow][Math.floor(N/2)] = true;
+    }
+    // Прорисовка центральных клеток и соединительных коридоров
+    for (let ry = 0; ry < N; ry++) {
+      for (let cx2 = 0; cx2 < N; cx2++) {
+        if (!hasCenter[ry][cx2]) continue;
+        const tx = cx2 * block + 1;
+        const ty = ry * block + 1;
+        // центральная плитка коридора
+        tiles[ty][tx] = 1;
+        // соединяем с востоком, если у соседа есть центр
+        if (cx2 < N-1 && hasCenter[ry][cx2+1]) {
+          for (let x = tx; x <= tx + block; x++) {
+            if (x < S) tiles[ty][x] = 1;
+          }
+        }
+        // соединяем с югом
+        if (ry < N-1 && hasCenter[ry+1][cx2]) {
+          for (let y = ty; y <= ty + block; y++) {
+            if (y < S) tiles[y][tx] = 1;
+          }
+        }
+      }
+    }
+    // соединяем центр чанка краевыми коридорами
+    const mid = Math.floor(S/2);
+    tiles[mid][0] = 1; 
+    tiles[mid][S-1] = 1;
+    tiles[0][mid] = 1;
+    tiles[S-1][mid] = 1;
 
-    return g;
+    // 2) Размещаем комнаты:
+    // Количество комнат 3–8
+    const roomCount = 3 + Math.floor(Math.random() * 6); // [3..8]
+    let placed = 0;
+    let attempts = 0;
+    while (placed < roomCount && attempts < roomCount * 20) {
+      attempts++;
+      // Случайный размер с распределением (скошенное к середине)
+      let w = Math.floor(((Math.random() + Math.random())/2) * 4 + 4);
+      let h = Math.floor(((Math.random() + Math.random())/2) * 4 + 4);
+      if (w > 8) w = 8; if (h > 8) h = 8;
+      // Положение внутреннего прямоугольника [1..S-2]
+      const maxX = S - w - 1;
+      const maxY = S - h - 1;
+      if (maxX < 1 || maxY < 1) break;
+      const rX = 1 + Math.floor(Math.random() * maxX);
+      const rY = 1 + Math.floor(Math.random() * maxY);
+      // Проверка на пересечение с уже занятыми (коридоры или другие комнаты)
+      let free = true;
+      for (let yy = rY; yy < rY + h && free; yy++) {
+        for (let xx = rX; xx < rX + w; xx++) {
+          if (tiles[yy][xx] !== 0) { free = false; break; }
+        }
+      }
+      if (!free) continue;
+      // Поиск возможных позиций для дверей вдоль границы комнаты
+      const doorCandidates = [];
+      // Левый край
+      if (rX > 0) {
+        for (let yy = rY; yy < rY + h; yy++) {
+          if (tiles[yy][rX-1] === 1) {
+            doorCandidates.push({ x: rX, y: yy });
+          }
+        }
+      }
+      // Правый край
+      if (rX + w < S) {
+        for (let yy = rY; yy < rY + h; yy++) {
+          if (tiles[yy][rX + w] === 1) {
+            doorCandidates.push({ x: rX + w - 1, y: yy });
+          }
+        }
+      }
+      // Верхний край
+      if (rY > 0) {
+        for (let xx = rX; xx < rX + w; xx++) {
+          if (tiles[rY-1][xx] === 1) {
+            doorCandidates.push({ x: xx, y: rY });
+          }
+        }
+      }
+      // Нижний край
+      if (rY + h < S) {
+        for (let xx = rX; xx < rX + w; xx++) {
+          if (tiles[rY + h][xx] === 1) {
+            doorCandidates.push({ x: xx, y: rY + h - 1 });
+          }
+        }
+      }
+      if (doorCandidates.length === 0) {
+        // если нет примыкающего коридора, пропускаем комнату
+        continue;
+      }
+      // Закрашиваем пол комнаты
+      for (let yy = rY; yy < rY + h; yy++) {
+        for (let xx = rX; xx < rX + w; xx++) {
+          tiles[yy][xx] = 2;
+        }
+      }
+      // Определяем количество дверей: минимум 2 если площадь >16, иначе минимум 1
+      const area = w * h;
+      const minDoors = (area > 16 ? 2 : 1);
+      let doorCount = minDoors;
+      if (doorCandidates.length > minDoors) {
+        doorCount = minDoors + Math.floor(Math.random() * Math.min(3 - minDoors + 1, doorCandidates.length - minDoors + 1));
+      }
+      // Случайно выбираем позиции дверей
+      const chosen = [];
+      while (chosen.length < doorCount && doorCandidates.length > 0) {
+        const idx = Math.floor(Math.random() * doorCandidates.length);
+        const cand = doorCandidates.splice(idx,1)[0];
+        chosen.push(cand);
+      }
+      // Прорисовываем двери (код 3) на границе комнаты
+      for (let d of chosen) {
+        tiles[d.y][d.x] = 3;
+      }
+      placed++;
+    }
+
+    return tiles;
   }
 }
 
-/* делаем класс доступным для game.js */
+// делаем доступным в глобальной области, чтобы game.js увидел
 window.GameMap = GameMap;
