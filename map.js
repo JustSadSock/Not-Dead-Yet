@@ -1,18 +1,18 @@
 // map.js
 //
-// Чанковая карта 32×32 с комнатами 4×4…8×8 и 2–3-клеточными коридорами.
-// Тайлы: 'room', 'door', 'hall', 'wall'
+// Чанковая карта 32×32:
+// — комнаты 4×4…8×8, строго разделённые стенами, но не ближе GAP тайлов
+// — коридоры 2–3 тайла толщиной между дверями
+// — двери 1–2 клетки на одной из сторон
+// — обязательно хотя бы одна сторона комнаты без дверей
 
 class GameMap {
   constructor() {
-    this.chunkSize  = 32;            // размер чанка
-    this.chunks     = new Map();     // Map<"cx,cy", { tiles, meta }>
-    this.generating = new Set();     // ключи чанков в процессе генерации
+    this.chunkSize  = 32;
+    this.chunks     = new Map();
+    this.generating = new Set();
   }
 
-  // ------------------ публичный API ------------------
-
-  /** Убедиться, что чанк (cx,cy) сгенерирован */
   ensureChunk(cx, cy) {
     const key = `${cx},${cy}`;
     if (this.chunks.has(key) || this.generating.has(key)) return;
@@ -30,48 +30,37 @@ class GameMap {
     this.generating.delete(key);
   }
 
-  /** true, если глобальный тайл (gx,gy) можно пройти */
   isFloor(gx, gy) {
-    const cx = Math.floor(gx / this.chunkSize),
-          cy = Math.floor(gy / this.chunkSize),
-          chunk = this.chunks.get(`${cx},${cy}`);
+    const cx = Math.floor(gx / this.chunkSize);
+    const cy = Math.floor(gy / this.chunkSize);
+    const chunk = this.chunks.get(`${cx},${cy}`);
     if (!chunk) return false;
-
-    const lx = gx - cx * this.chunkSize,
-          ly = gy - cy * this.chunkSize;
+    const lx = gx - cx * this.chunkSize;
+    const ly = gy - cy * this.chunkSize;
     if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) return false;
-
     const t = chunk.tiles[ly][lx];
     return t === 'room' || t === 'hall' || t === 'door';
   }
 
-  /**
-   * Пакетная перегенерация чанков:
-   * сохраняем все тайлы, видимые или непотухшие,
-   * удаляем чанк, генерируем заново, восстанавливаем их.
-   */
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
     const vis = computeFOV(player.x, player.y, player.angle);
-
     for (const key of keys) {
       const [cx, cy] = key.split(',').map(Number);
-      const oldC = this.chunks.get(key);
-      if (!oldC) continue;
+      const old = this.chunks.get(key);
+      if (!old) continue;
 
-      // стэш «живых» тайлов
       const stash = [];
       const bx = cx * this.chunkSize, by = cy * this.chunkSize;
       for (let y = 0; y < this.chunkSize; y++) {
         for (let x = 0; x < this.chunkSize; x++) {
           const gx = bx + x, gy = by + y;
-          const m  = oldC.meta[y][x];
+          const m  = old.meta[y][x];
           if (vis.has(`${gx},${gy}`) || m.memoryAlpha > 0) {
-            stash.push({ x, y, tile: oldC.tiles[y][x], meta: { ...m } });
+            stash.push({ x, y, tile: old.tiles[y][x], meta: { ...m } });
           }
         }
       }
 
-      // реген
       this.chunks.delete(key);
       this.ensureChunk(cx, cy);
       const fresh = this.chunks.get(key);
@@ -82,30 +71,32 @@ class GameMap {
     }
   }
 
-  // ------------------ внутренняя генерация ------------------
-
+  // ──────────────────────────────────────────────────────────────
   _generateChunk(cx, cy) {
-    const S = this.chunkSize;
-    // 1) изначально всё — стены
+    const S   = this.chunkSize;
+    const GAP = 5;   // минимум клеток между комнатами
     const tiles = Array.from({ length: S }, () => Array(S).fill('wall'));
 
-    // 2) размещаем 3–8 случайных непересекающихся комнат 4×4…8×8
+    // 1) разместить 3–8 комнат 4×4…8×8, разнесённых не ближе чем GAP
     const rooms = [];
-    const count = 3 + Math.floor(Math.random() * 6);
-    for (let i = 0; i < count && rooms.length < count; i++) {
-      const w = 4 + Math.floor(Math.random() * 5), // [4..8]
+    const want  = 3 + Math.floor(Math.random() * 6);
+    for (let tries = 0; rooms.length < want && tries < want * 5; tries++) {
+      const w = 4 + Math.floor(Math.random() * 5),
             h = 4 + Math.floor(Math.random() * 5),
             x = 1 + Math.floor(Math.random() * (S - w - 2)),
             y = 1 + Math.floor(Math.random() * (S - h - 2));
-      // проверка зазора 1 клетка вокруг
+
       let ok = true;
       for (const r of rooms) {
-        if (!(x + w < r.x - 1 || r.x + r.w < x - 1 ||
-              y + h < r.y - 1 || r.y + r.h < y - 1)) {
-          ok = false; break;
+        if (!(x + w + GAP < r.x - 1 ||
+              r.x + r.w + GAP < x - 1 ||
+              y + h + GAP < r.y - 1 ||
+              r.y + r.h + GAP < y - 1)) {
+          ok = false;
+          break;
         }
       }
-      if (!ok) { i--; continue; }
+      if (!ok) continue;
 
       rooms.push({ x, y, w, h });
       for (let yy = y; yy < y + h; yy++) {
@@ -114,11 +105,12 @@ class GameMap {
         }
       }
     }
+    if (rooms.length < 2) return tiles;
 
-    // 3) строим минимальное остовное дерево по центрам комнат
+    // 2) MST по центрам комнат
     const centers = rooms.map(r => ({
-      x: r.x + Math.floor(r.w/2),
-      y: r.y + Math.floor(r.h/2)
+      x: r.x + Math.floor(r.w / 2),
+      y: r.y + Math.floor(r.h / 2)
     }));
     const connected = new Set([0]);
     const edges = [];
@@ -137,75 +129,110 @@ class GameMap {
       edges.push([best.i, best.j]);
     }
 
-    // 4) для каждого ребра: двери + коридор
+    // подготовим хранилище дверей по room/#сторанам
+    const doorSides = rooms.map(() => new Set());
+    const doorPos   = rooms.map(() => ({ N:[], S:[], E:[], W:[] }));
+
+    // вырезать коридор толщиной 2..3
     const carveHall = (x1, y1, x2, y2) => {
-      const W = 2 + Math.floor(Math.random() * 2);  // ширина 2..3
-      // горизонтальный сегмент
-      const xa = Math.min(x1, x2), xb = Math.max(x1, x2);
-      const yc = y1;
-      const y0 = yc - Math.floor(W/2);
-      for (let x = xa; x <= xb; x++) {
-        for (let dy = 0; dy < W; dy++) {
-          const yy = y0 + dy;
-          if (yy >= 0 && yy < S && tiles[yy][x] === 'wall') {
-            tiles[yy][x] = 'hall';
-          }
-        }
-      }
-      // вертикальный сегмент
-      const ya = Math.min(y1, y2), yb = Math.max(y1, y2);
-      const xc = x2;
-      const x0 = xc - Math.floor(W/2);
-      for (let y = ya; y <= yb; y++) {
-        for (let dx = 0; dx < W; dx++) {
-          const xx = x0 + dx;
-          if (xx >= 0 && xx < S && tiles[y][xx] === 'wall') {
-            tiles[y][xx] = 'hall';
-          }
-        }
+      const W = 2 + Math.floor(Math.random() * 2);
+      // L-образно: сначала X, потом Y
+      if (Math.random() < 0.5) {
+        // X
+        const xa = Math.min(x1, x2), xb = Math.max(x1, x2),
+              mY = y1 - Math.floor(W/2);
+        for (let x = xa; x <= xb; x++)
+          for (let dy = 0; dy < W; dy++)
+            if (tiles[mY+dy]?.[x] === 'wall')
+              tiles[mY+dy][x] = 'hall';
+        // Y
+        const ya = Math.min(y1, y2), yb = Math.max(y1, y2),
+              mX = x2 - Math.floor(W/2);
+        for (let y = ya; y <= yb; y++)
+          for (let dx = 0; dx < W; dx++)
+            if (tiles[y]?.[mX+dx] === 'wall')
+              tiles[y][mX+dx] = 'hall';
+      } else {
+        // Y first
+        const ya = Math.min(y1, y2), yb = Math.max(y1, y2),
+              mX = x1 - Math.floor(W/2);
+        for (let y = ya; y <= yb; y++)
+          for (let dx = 0; dx < W; dx++)
+            if (tiles[y]?.[mX+dx] === 'wall')
+              tiles[y][mX+dx] = 'hall';
+        // X
+        const xa = Math.min(x1, x2), xb = Math.max(x1, x2),
+              mY = y2 - Math.floor(W/2);
+        for (let x = xa; x <= xb; x++)
+          for (let dy = 0; dy < W; dy++)
+            if (tiles[mY+dy]?.[x] === 'wall')
+              tiles[mY+dy][x] = 'hall';
       }
     };
 
+    // 3) для каждого ребра — ставим двери и вырезаем коридор
     for (const [i, j] of edges) {
       const A = rooms[i], B = rooms[j];
-      // выбираем сторону дверей для A и B
-      const dx = centers[j].x - centers[i].x;
-      const dy = centers[j].y - centers[i].y;
-      let doorA, doorB;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        // горизонтальное соединение
-        if (dx > 0) { 
-          // дверь справа у A
-          const ya = A.y + Math.floor(Math.random() * A.h);
-          doorA = [A.x + A.w - 1, ya];
-          // дверь слева у B
-          const yb = B.y + Math.floor(Math.random() * B.h);
-          doorB = [B.x, yb];
-        } else {
-          const ya = A.y + Math.floor(Math.random() * A.h);
-          doorA = [A.x, ya];
-          const yb = B.y + Math.floor(Math.random() * B.h);
-          doorB = [B.x + B.w - 1, yb];
-        }
+      const cA = centers[i], cB = centers[j];
+
+      let sideA, sideB, doorA, doorB;
+
+      // горизонтальный перевод
+      if (Math.abs(cB.x - cA.x) >= Math.abs(cB.y - cA.y)) {
+        sideA = (cB.x > cA.x ? 'E' : 'W');
+        sideB = (cB.x > cA.x ? 'W' : 'E');
       } else {
-        // вертикальное соединение
-        if (dy > 0) {
-          const xa = A.x + Math.floor(Math.random() * A.w);
-          doorA = [xa, A.y + A.h - 1];
-          const xb = B.x + Math.floor(Math.random() * B.w);
-          doorB = [xb, B.y];
+        sideA = (cB.y > cA.y ? 'S' : 'N');
+        sideB = (cB.y > cA.y ? 'N' : 'S');
+      }
+
+      // сгенерить 1–2 двери на этой стороне
+      const cntA = 1 + Math.floor(Math.random() * 2),
+            cntB = 1 + Math.floor(Math.random() * 2);
+
+      const place = (r, side, cnt, dpArr) => {
+        const arr = [];
+        if (side === 'N' || side === 'S') {
+          const yy = r.y + (side === 'N' ? 0 : r.h-1);
+          const start = r.x, end = r.x + r.w - 1 - (cnt-1);
+          const xx0 = start + Math.floor(Math.random()*(end-start+1));
+          for (let k = 0; k < cnt; k++) {
+            const x = xx0 + k, y = yy;
+            tiles[y][x] = 'door';
+            arr.push([x,y]);
+          }
         } else {
-          const xa = A.x + Math.floor(Math.random() * A.w);
-          doorA = [xa, A.y];
-          const xb = B.x + Math.floor(Math.random() * B.w);
-          doorB = [xb, B.y + B.h - 1];
+          const xx = r.x + (side === 'W' ? 0 : r.w-1);
+          const start = r.y, end = r.y + r.h - 1 - (cnt-1);
+          const yy0 = start + Math.floor(Math.random()*(end-start+1));
+          for (let k = 0; k < cnt; k++) {
+            const x = xx, y = yy0 + k;
+            tiles[y][x] = 'door';
+            arr.push([x,y]);
+          }
+        }
+        dpArr[side].push(...arr);
+        doorSides[r === A ? i : j].add(side);
+        return arr;
+      };
+
+      const dA = place(A, sideA, cntA, doorPos[i]);
+      const dB = place(B, sideB, cntB, doorPos[j]);
+
+      // теперь коридор между *первой* парой дверей
+      carveHall(dA[0][0], dA[0][1], dB[0][0], dB[0][1]);
+    }
+
+    // 4) для каждой комнаты: если дверей оказалось на 4 сторонах — закрываем одну
+    for (let idx = 0; idx < rooms.length; idx++) {
+      const sidesUsed = Array.from(doorSides[idx]);
+      if (sidesUsed.length === 4) {
+        // случайно выбираем сторону, которую «заделать» стеной
+        const sideToClose = sidesUsed[Math.floor(Math.random()*4)];
+        for (const [x,y] of doorPos[idx][sideToClose]) {
+          tiles[y][x] = 'wall';
         }
       }
-      // ставим двери
-      tiles[doorA[1]][doorA[0]] = 'door';
-      tiles[doorB[1]][doorB[0]] = 'door';
-      // вырубаем коридор из двери в дверь
-      carveHall(doorA[0], doorA[1], doorB[0], doorB[1]);
     }
 
     return tiles;
