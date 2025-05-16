@@ -1,214 +1,228 @@
 // game.js
+// ==========================================================
+//  Канвас, базовые константы
+// ==========================================================
+const TILE_SIZE    = 32;          // px
+const MOVE_SPEED   = 3;           // тайлов/сек
+const FOV_ANGLE    = Math.PI / 3; // 60°
+const FOV_DIST     = 6;           // тайлов
+const FADE_RATE    = 1 / 4;       // α → 0 за 4 c
+const REGEN_PERIOD = 1.0;         // сек
 
-// Создаём Canvas
-const canvas = document.createElement('canvas');
-document.body.style.margin = '0'; canvas.style.display = 'block';
-document.body.appendChild(canvas);
-const ctx = canvas.getContext('2d');
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+let C_W, C_H;
+function resize () {
+  C_W = canvas.width  = window.innerWidth;
+  C_H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
 
-// Настройки тайлов и карты
-const TILE_SIZE = 32;
-const map = new GameMap(50);
+// ==========================================================
+//  Игрок + ввод  (W-A-S-D и виртуальный джойстик)
+// ==========================================================
+const player = { x: 0, y: 0, angle: 0 };
+const Input  = { dx: 0, dy: 0 };
 
-// Состояние игрока
-let playerX = 0, playerY = 0;
-let facingX = 0, facingY = -1; // направление взгляда (на старте — вверх)
-
-// Позиция виртуального джойстика
-const joystickBase = {x: 100, y: 0, r: 60};
-const joystickPos  = {x: 100, y: 0};
-let joystickActive = false;
-
-// Обработчики ввода
-window.addEventListener('resize', onResize);
-onResize();
-window.addEventListener('keydown', e => keys[e.key] = true);
-window.addEventListener('keyup',   e => keys[e.key] = false);
-canvas.addEventListener('touchstart', onTouchStart);
-canvas.addEventListener('touchmove',  onTouchMove);
-canvas.addEventListener('touchend',   onTouchEnd);
-
-function onResize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    joystickBase.y = canvas.height - 100;
-    joystickPos.x = joystickBase.x;
-    joystickPos.y = joystickBase.y;
+// --- клавиатура WASD --------------------------------------------------------
+const kState = {};
+window.addEventListener('keydown', e => {
+  kState[e.key.toLowerCase()] = true;
+});
+window.addEventListener('keyup', e => {
+  kState[e.key.toLowerCase()] = false;
+});
+function readKeyboard () {
+  Input.dx = (kState['d'] ? 1 : 0) - (kState['a'] ? 1 : 0);
+  Input.dy = (kState['s'] ? 1 : 0) - (kState['w'] ? 1 : 0);
 }
 
-const keys = {};
-function onTouchStart(e) {
-    e.preventDefault();
-    const t = e.changedTouches[0];
-    const dx = t.clientX - joystickBase.x, dy = t.clientY - joystickBase.y;
-    if (Math.hypot(dx,dy) <= joystickBase.r) {
-        joystickActive = true;
-        joystickPos.x = t.clientX; joystickPos.y = t.clientY;
-    }
-}
-function onTouchMove(e) {
-    e.preventDefault();
-    if (!joystickActive) return;
-    const t = e.changedTouches[0];
-    let dx = t.clientX - joystickBase.x, dy = t.clientY - joystickBase.y;
-    const mag = Math.hypot(dx,dy);
-    if (mag > joystickBase.r) {
-        dx = dx/mag * joystickBase.r;
-        dy = dy/mag * joystickBase.r;
-    }
-    joystickPos.x = joystickBase.x + dx;
-    joystickPos.y = joystickBase.y + dy;
-}
-function onTouchEnd(e) {
-    e.preventDefault();
-    joystickActive = false;
-    joystickPos.x = joystickBase.x;
-    joystickPos.y = joystickBase.y;
-}
+// --- мобильный джойстик -----------------------------------------------------
+/*  Простейший «палец-джойстик»: при touchstart фиксируем центр,
+ *  движение пальца → вектор [-1..1] в Input.dx/dy  */
+let joyCenter = null;
+canvas.addEventListener('touchstart', ev => {
+  const t = ev.touches[0];
+  joyCenter = { x: t.clientX, y: t.clientY };
+});
+canvas.addEventListener('touchmove', ev => {
+  if (!joyCenter) return;
+  const t = ev.touches[0];
+  const dx = (t.clientX - joyCenter.x) / 64;
+  const dy = (t.clientY - joyCenter.y) / 64;
+  Input.dx = Math.max(-1, Math.min(1, dx));
+  Input.dy = Math.max(-1, Math.min(1, dy));
+});
+canvas.addEventListener('touchend', () => {
+  joyCenter = null;
+  Input.dx = Input.dy = 0;
+});
 
-// Спавн игрока: в центре первой комнаты чанка (0,0)
-function spawnPlayer() {
-    const ch = map.getChunk(0,0);
-    for (let yy = 0; yy < ch.size; yy++) {
-        for (let xx = 0; xx < ch.size; xx++) {
-            if (ch.tiles[yy][xx].type === "room") {
-                playerX = xx; playerY = yy; return;
-            }
+// ==========================================================
+//  Карта
+// ==========================================================
+const gameMap = new GameMap();        // из map.js
+const CHUNK   = gameMap.chunkSize;
+
+gameMap.ensureChunk(0, 0);
+player.x = player.y = CHUNK / 2;
+
+// таймеры
+let lastT = performance.now();
+let regenT = 0;
+const toRegen = new Set();
+
+// ==========================================================
+//  Основной цикл
+// ==========================================================
+function loop (now = performance.now()) {
+  const dt = (now - lastT) / 1000;
+  lastT = now;
+  regenT += dt;
+
+  readKeyboard();                            // WASD
+
+  const pcx = Math.floor(player.x / CHUNK);
+  const pcy = Math.floor(player.y / CHUNK);
+
+  // ---------- догружаем соседние чанки --------------------
+  const R = 2;                               // радиус в чанках
+  for (let dy = -R; dy <= R; dy++)
+    for (let dx = -R; dx <= R; dx++)
+      gameMap.ensureChunk(pcx + dx, pcy + dy);
+
+  // ---------- движение ------------------------------------
+  let { dx, dy } = Input;
+  const mag = Math.hypot(dx, dy) || 1;
+  dx /= mag; dy /= mag;
+
+  if (dx || dy) {
+    player.angle = Math.atan2(dy, dx);
+
+    const nx = player.x + dx * MOVE_SPEED * dt;
+    if (gameMap.isFloor(nx | 0, player.y | 0)) player.x = nx;
+
+    const ny = player.y + dy * MOVE_SPEED * dt;
+    if (gameMap.isFloor(player.x | 0, ny | 0)) player.y = ny;
+  }
+
+  // ---------- FOV + память --------------------------------
+  const vis = computeFOV(player.x, player.y, player.angle);
+
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = pcx + dx, cy = pcy + dy, key = `${cx},${cy}`;
+      const ch = gameMap.chunks.get(key);
+      if (!ch) continue;
+
+      const bX = cx * CHUNK, bY = cy * CHUNK;
+      for (let y = 0; y < CHUNK; y++)
+        for (let x = 0; x < CHUNK; x++) {
+          const m = ch.meta[y][x];
+          const gk = `${bX + x},${bY + y}`;
+
+          if (vis.has(gk)) {
+            m.visited = true;
+            m.memoryAlpha = 1;
+          } else if (m.memoryAlpha > 0) {
+            m.memoryAlpha = Math.max(0, m.memoryAlpha - FADE_RATE * dt);
+            if (m.memoryAlpha === 0) toRegen.add(key);
+          }
         }
     }
-    playerX = ch.size/2; playerY = ch.size/2;
-}
-spawnPlayer();
 
-// Параметры поля зрения
-const FOV_RADIUS = 6;
-const FOV_ANGLE = Math.PI/3; // 60 градусов
+  // ---------- пакетная регенерация ------------------------
+  if (regenT >= REGEN_PERIOD) {
+    regenT -= REGEN_PERIOD;
+    if (toRegen.size) {
+      gameMap.regenerateChunksPreserveFOV(
+        toRegen,
+        computeFOV,
+        player
+      );
+      toRegen.clear();
+    }
+  }
 
-let lastTime = 0;
-function gameLoop(time) {
-    const dt = (time - lastTime)/1000; lastTime = time;
-    update(dt);
-    render();
-    requestAnimationFrame(gameLoop);
-}
-requestAnimationFrame(gameLoop);
-
-function update(dt) {
-    let dx=0, dy=0;
-    // Клавиши WASD / стрелки
-    if (keys['ArrowUp'] || keys['w']||keys['W'])    { dy=-1; facingX=0; facingY=-1; }
-    if (keys['ArrowDown']|| keys['s']||keys['S'])  { dy=1;  facingX=0; facingY=1;  }
-    if (keys['ArrowLeft']|| keys['a']||keys['A'])  { dx=-1; facingX=-1; facingY=0; }
-    if (keys['ArrowRight']|| keys['d']||keys['D']) { dx=1;  facingX=1;  facingY=0; }
-    // Виртуальный джойстик
-    if (joystickActive) {
-        const vx = joystickPos.x - joystickBase.x;
-        const vy = joystickPos.y - joystickBase.y;
-        const mag = Math.hypot(vx, vy);
-        if (mag > 20) {
-            if (Math.abs(vx) > Math.abs(vy)) {
-                dx = (vx>0?1:-1); dy = 0;
-            } else {
-                dx = 0; dy = (vy>0?1:-1);
-            }
-            if (dx!==0 || dy!==0) { facingX=dx; facingY=dy; }
-        }
-    }
-    // Перемещение игрока с проверкой стен
-    if (dx!==0 && dy!==0) {
-        // Диагональ
-        const tileX = map.getTile(playerX+dx, playerY);
-        const tileY = map.getTile(playerX, playerY+dy);
-        if (tileX && tileX.type!=="wall" && tileY && tileY.type!=="wall") {
-            playerX += dx; playerY += dy;
-        } else {
-            if (tileX && tileX.type!=="wall") playerX += dx;
-            else if (tileY && tileY.type!=="wall") playerY += dy;
-        }
-    } else if (dx!==0 || dy!==0) {
-        const tile = map.getTile(playerX+dx, playerY+dy);
-        if (tile && tile.type !== "wall") {
-            playerX += dx; playerY += dy;
-        }
-    }
-    // Вычисление видимых тайлов (FOV) лучами
-    const visible = new Set();
-    const angle0 = Math.atan2(facingY, facingX);
-    for (let i = 0; i <= 60; i++) {
-        const ang = angle0 - FOV_ANGLE/2 + (i/60)*FOV_ANGLE;
-        const vx = Math.cos(ang), vy = Math.sin(ang);
-        for (let r = 0; r <= FOV_RADIUS; r++) {
-            const tx = playerX + Math.round(vx*r);
-            const ty = playerY + Math.round(vy*r);
-            const tile = map.getTile(tx, ty);
-            if (!tile) break;
-            visible.add(tx+","+ty);
-            if (tile.type === "wall") break;
-        }
-    }
-    // Обновление memoryAlpha: видимые мгновенно 1.0, остальные затухают
-    const fadeRate = 0.5;
-    for (let yy = playerY - FOV_RADIUS - 2; yy <= playerY + FOV_RADIUS + 2; yy++) {
-        for (let xx = playerX - FOV_RADIUS - 2; xx <= playerX + FOV_RADIUS + 2; xx++) {
-            const tile = map.getTile(xx, yy);
-            if (!tile) continue;
-            const key = xx+","+yy;
-            if (visible.has(key)) {
-                tile.memoryAlpha = 1.0;
-            } else {
-                tile.memoryAlpha -= fadeRate * dt;
-                if (tile.memoryAlpha < 0) tile.memoryAlpha = 0;
-            }
-        }
-    }
+  render();
+  requestAnimationFrame(loop);
 }
 
-function render() {
-    // Очищаем экран
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // Сдвиг камеры: центрируем на игроке
-    const offsetX = canvas.width/2 - playerX * TILE_SIZE;
-    const offsetY = canvas.height/2 - playerY * TILE_SIZE;
-    // Рисуем тайлы вокруг игрока
-    const cols = Math.ceil(canvas.width / TILE_SIZE);
-    const rows = Math.ceil(canvas.height / TILE_SIZE);
-    const startX = Math.floor(playerX - cols/2) - 1;
-    const startY = Math.floor(playerY - rows/2) - 1;
-    for (let yy = startY; yy < startY + rows + 2; yy++) {
-        for (let xx = startX; xx < startX + cols + 2; xx++) {
-            const tile = map.getTile(xx, yy);
-            if (!tile) continue;
-            const alpha = tile.memoryAlpha;
-            if (alpha <= 0) continue;
-            let color;
-            switch(tile.type) {
-                case "room":     color = "#3366CC"; break; // синий пол комнаты
-                case "corridor": color = "#999999"; break; // светло-серый
-                case "door":     color = "#CC9933"; break; // коричневатый-жёлтый
-                case "wall":     color = "#444444"; break; // тёмно-серый
-                default:         color = "#000000"; break;
-            }
-            ctx.globalAlpha = alpha;
-            ctx.fillStyle = color;
-            ctx.fillRect(offsetX + xx*TILE_SIZE, offsetY + yy*TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            ctx.globalAlpha = 1.0;
-        }
+// ==========================================================
+//  FOV — лучевой кастинг 60°
+// ==========================================================
+function computeFOV (px, py, angle) {
+  const res = new Set();
+  const steps = 64;
+  const half = FOV_ANGLE / 2;
+
+  for (let i = 0; i <= steps; i++) {
+    const a  = angle - half + (i / steps) * FOV_ANGLE;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let d = 0;
+
+    while (d < FOV_DIST) {
+      const gx = Math.floor(px + dx * d);
+      const gy = Math.floor(py + dy * d);
+      res.add(`${gx},${gy}`);
+      if (!gameMap.isFloor(gx, gy)) break;
+      d += 0.2;
     }
-    // Рисуем игрока как красный квадрат
-    ctx.fillStyle = "#FF0000";
-    ctx.fillRect(canvas.width/2, canvas.height/2, TILE_SIZE, TILE_SIZE);
-    // Рисуем виртуальный джойстик
-    ctx.save();
-    ctx.globalAlpha = 0.5;
-    ctx.fillStyle = "#555555";
-    ctx.beginPath();
-    ctx.arc(joystickBase.x, joystickBase.y, joystickBase.r, 0, 2*Math.PI);
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-    ctx.fillStyle = "#AAAAAA";
-    ctx.beginPath();
-    ctx.arc(joystickPos.x, joystickPos.y, 30, 0, 2*Math.PI);
-    ctx.fill();
-    ctx.restore();
+  }
+  return res;
 }
+
+// ==========================================================
+//  Рендер
+// ==========================================================
+function render () {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, C_W, C_H);
+
+  ctx.save();
+  ctx.translate(C_W / 2 - player.x * TILE_SIZE,
+                C_H / 2 - player.y * TILE_SIZE);
+
+  const vis = computeFOV(player.x, player.y, player.angle);
+
+  const minX = Math.floor(player.x - C_W / TILE_SIZE / 2) - 1;
+  const maxX = Math.floor(player.x + C_W / TILE_SIZE / 2) + 1;
+  const minY = Math.floor(player.y - C_H / TILE_SIZE / 2) - 1;
+  const maxY = Math.floor(player.y + C_H / TILE_SIZE / 2) + 1;
+
+  for (let gy = minY; gy <= maxY; gy++)
+    for (let gx = minX; gx <= maxX; gx++) {
+      const ck = `${Math.floor(gx / CHUNK)},${Math.floor(gy / CHUNK)}`;
+      const ch = gameMap.chunks.get(ck);
+      if (!ch) continue;
+
+      const lx = ((gx % CHUNK) + CHUNK) % CHUNK;
+      const ly = ((gy % CHUNK) + CHUNK) % CHUNK;
+
+      const meta = ch.meta[ly][lx];
+      if (meta.memoryAlpha <= 0) continue;
+
+      const t = ch.tiles[ly][lx];
+      let col = '#222';
+      if (t === 'hall')  col = '#5e5e5e';
+      if (t === 'door')  col = '#cfa35e';
+      if (t === 'room')  col = '#3e7eaa';
+
+      ctx.globalAlpha = meta.memoryAlpha;
+      ctx.fillStyle   = col;
+      ctx.fillRect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+
+  // игрок
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ff1e1e';
+  ctx.beginPath();
+  ctx.arc(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ==========================================================
+requestAnimationFrame(loop);
