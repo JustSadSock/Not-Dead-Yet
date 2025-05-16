@@ -1,160 +1,180 @@
 // map.js
+//
+// Процедурная «квартира-лабиринт» на чанках 32×32
+// Типы тайлов:
+//   'hall'  — коридор (проходимо)
+//   'door'  — дверной проём (проходимо)
+//   'room'  — помещение (проходимо)
+//   'wall'  — стена (НЕ проходимо)
+
 class GameMap {
-  constructor() {
-    this.chunkSize = 33;
-    this.chunks    = new Map();
-    this.generating = new Set();
+  constructor () {
+    this.chunkSize = 32;                     // == game.js.chunkSize
+    this.chunks    = new Map();              // Map<"cx,cy", {tiles,meta}>
+    this.generating = new Set();             // чтобы не генерить дважды
   }
 
-  ensureChunk(cx, cy) {
+  // ---------- Публичное API -------------------------------------------------
+
+  /** убедиться, что чанк (cx,cy) существует */
+  ensureChunk (cx, cy) {
     const key = `${cx},${cy}`;
     if (this.chunks.has(key) || this.generating.has(key)) return;
     this.generating.add(key);
 
     const tiles = this._generateChunk(cx, cy);
-    const meta  = Array.from({length:this.chunkSize}, () =>
-      Array.from({length:this.chunkSize}, () => ({memoryAlpha:0, visited:false}))
+
+    const meta = Array.from({ length: this.chunkSize }, () =>
+      Array.from({ length: this.chunkSize }, () => ({
+        memoryAlpha : 0,
+        visited     : false,
+      }))
     );
 
-    this.chunks.set(key, {tiles, meta});
+    this.chunks.set(key, { tiles, meta });
     this.generating.delete(key);
   }
 
-  isFloor(gx, gy) {
-    const cx = Math.floor(gx/this.chunkSize),
-          cy = Math.floor(gy/this.chunkSize);
+  /** true, если глобальный тайл проходимый */
+  isFloor (gx, gy) {
+    const cx = Math.floor(gx / this.chunkSize);
+    const cy = Math.floor(gy / this.chunkSize);
     const chunk = this.chunks.get(`${cx},${cy}`);
     if (!chunk) return false;
-    const lx = gx - cx*this.chunkSize,
-          ly = gy - cy*this.chunkSize;
-    if (lx<0||ly<0||lx>=this.chunkSize||ly>=this.chunkSize) return false;
-    return chunk.tiles[ly][lx] !== 'wall';
+    const lx = gx - cx * this.chunkSize;
+    const ly = gy - cy * this.chunkSize;
+    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) return false;
+
+    const t = chunk.tiles[ly][lx];
+    return t === 'hall' || t === 'door' || t === 'room';
   }
 
-  regenerateChunksPreserveFOV(keys, fov, p) {
-    const vis = fov(p.x, p.y, p.angle);
+  /** пакетная регенерация (сохраняем FOV) */
+  regenerateChunksPreserveFOV (keys, computeFOV, player) {
+    const vis = computeFOV(player.x, player.y, player.angle);
+
     for (const key of keys) {
-      const old = this.chunks.get(key); if (!old) continue;
-      const [cx,cy] = key.split(',').map(Number);
-      const stash=[];
-      const bx=cx*this.chunkSize, by=cy*this.chunkSize;
-      for(let y=0;y<this.chunkSize;y++){
-        for(let x=0;x<this.chunkSize;x++){
-          const gx=bx+x, gy=by+y, m=old.meta[y][x];
-          if(vis.has(`${gx},${gy}`)||m.memoryAlpha>0){
-            stash.push({x,y,tile:old.tiles[y][x],meta:{...m}});
+      const [cx, cy] = key.split(',').map(Number);
+      const old = this.chunks.get(key);
+      if (!old) continue;
+
+      const stash = [];
+      const bx = cx * this.chunkSize, by = cy * this.chunkSize;
+
+      for (let y = 0; y < this.chunkSize; y++)
+        for (let x = 0; x < this.chunkSize; x++) {
+          const gx = bx + x, gy = by + y;
+          const m  = old.meta[y][x];
+          if (vis.has(`${gx},${gy}`) || m.memoryAlpha > 0) {
+            stash.push({ x, y, tile: old.tiles[y][x], meta: { ...m } });
           }
         }
-      }
+
       this.chunks.delete(key);
-      this.ensureChunk(cx,cy);
-      const fresh=this.chunks.get(key);
-      for(const s of stash){
-        fresh.tiles[s.y][s.x]=s.tile;
-        fresh.meta [s.y][s.x]=s.meta;
+      this.ensureChunk(cx, cy);
+
+      const fresh = this.chunks.get(key);
+      for (const s of stash) {
+        fresh.tiles[s.y][s.x] = s.tile;
+        fresh.meta [s.y][s.x] = s.meta;
       }
     }
   }
 
-  /* ──────────────────────────────────────────
-     процедурная генерация (комнаты+коридоры)
-     ────────────────────────────────────────── */
-  _generateChunk(){
-    const Nrooms = 3+Math.floor(Math.random()*6);   // 3-8
-    const S=this.chunkSize;
-    const tiles = Array.from({length:S}, ()=>Array(S).fill('wall'));
+  // ---------- Внутренности генерации ---------------------------------------
 
-    /* размещаем комнаты */
-    const rooms=[];
-    for(let i=0;i<Nrooms&&rooms.length<8;i++){
-      const w = 4+Math.floor(Math.random()*5); // 4-8
-      const h = 4+Math.floor(Math.random()*5);
-      const x = 1+Math.floor(Math.random()*(S-w-2));
-      const y = 1+Math.floor(Math.random()*(S-h-2));
-      let overlap=false;
-      for(const r of rooms){
-        if(!(x+w<r.x-1||r.x+r.w<x-1||y+h<r.y-1||r.y+r.h<y-1)){overlap=true;break;}
+  /**
+   * Генерируем чанк 32×32:
+   *  1. На вспомогательной сетке 11×11 строим spanning-tree
+   *  2. Каждая «комната» 2×2 клетки и масштаб 3×3 → даёт коридоры 2-клеточной толщины
+   *  3. По правилам расставляем 'door' и гарантируем отсутствие диагональных проходов
+   */
+  _generateChunk (cx, cy) {
+    const N = 11;                              // размер вспом. сетки
+    const S = this.chunkSize;
+    const tiles = Array.from({ length: S }, () => Array(S).fill('wall'));
+
+    // --- 1. spanning-tree на 11×11 -----------------------------------------
+    const conn    = Array.from({ length: N },
+                  () => Array.from({ length: N },
+                  () => ({ N:0,S:0,E:0,W:0 })));
+    const vis = Array.from({ length: N }, () => Array(N).fill(false));
+
+    const stack = [{ x: (N/2)|0, y: (N/2)|0 }];
+    vis[stack[0].y][stack[0].x] = true;
+
+    const dirDX = { N:0, S:0, W:-1, E:1 };
+    const dirDY = { N:-1, S:1, W:0, E:0 };
+    const opposite = { N:'S', S:'N', W:'E', E:'W' };
+
+    while (stack.length) {
+      const top = stack.at(-1);
+      const nd = [];
+      if (top.y>0   && !vis[top.y-1][top.x]) nd.push('N');
+      if (top.y<N-1 && !vis[top.y+1][top.x]) nd.push('S');
+      if (top.x>0   && !vis[top.y][top.x-1]) nd.push('W');
+      if (top.x<N-1 && !vis[top.y][top.x+1]) nd.push('E');
+
+      if (nd.length) {
+        const d = nd[Math.random()*nd.length|0];
+        const nx = top.x + dirDX[d];
+        const ny = top.y + dirDY[d];
+        conn[top.y][top.x][d] = 1;
+        conn[ny][nx][opposite[d]] = 1;
+        vis[ny][nx] = true;
+        stack.push({ x:nx, y:ny });
+      } else {
+        stack.pop();
       }
-      if(overlap) {i--;continue;}
-      rooms.push({x,y,w,h});
-      for(let yy=y;yy<y+h;yy++)
-        for(let xx=x;xx<x+w;xx++) tiles[yy][xx]='room';
     }
-    if(rooms.length<2) return tiles;
 
-    /* коридоры — остовное дерево */
-    const centers=rooms.map(r=>({x:r.x+(r.w>>1),y:r.y+(r.h>>1)}));
-    const connected=new Set([0]), edges=[];
-    while(connected.size<rooms.length){
-      let best=null;
-      for(const i of connected){
-        for(let j=0;j<rooms.length;j++){
-          if(connected.has(j)) continue;
-          const dx=centers[i].x-centers[j].x, dy=centers[i].y-centers[j].y;
-          const d=dx*dx+dy*dy;
-          if(!best||d<best.d) best={i,j,d};
+    // --- 2. Раскладываем 11×11 → 32×32 -------------------------------------
+    // каждая ячейка 3×3: 2×2 «комната» + коридоры-толстые 2 клетки
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const bx = i*3, by = j*3;
+
+        // ядро комнаты 2×2
+        tiles[by  ][bx  ] = 'room';
+        tiles[by  ][bx+1] = 'room';
+        tiles[by+1][bx  ] = 'room';
+        tiles[by+1][bx+1] = 'room';
+
+        // связь E → дверь 2 клетки + коридор 2 клетки
+        if (conn[j][i].E) {
+          tiles[by  ][bx+2] = 'door';
+          tiles[by+1][bx+2] = 'door';
+          tiles[by  ][bx+3] = 'hall';
+          tiles[by+1][bx+3] = 'hall';
+        }
+
+        // связь S → дверь 2 клетки + коридор 2 клетки
+        if (conn[j][i].S) {
+          tiles[by+2][bx  ] = 'door';
+          tiles[by+2][bx+1] = 'door';
+          tiles[by+3][bx  ] = 'hall';
+          tiles[by+3][bx+1] = 'hall';
         }
       }
-      connected.add(best.j); edges.push(best);
     }
 
-    /* функция прорубает коридор толщиной 2-3 */
-    const carveHall=(x0,y0,x1,y1)=>{
-      const W=2+Math.floor(Math.random()*2);
-      if(x0===x1){ // вертикальный
-        const cols=[];
-        if(W===2) cols.push(x0,x0+1);
-        else cols.push(x0-1,x0,x0+1);
-        const [ya,yb]=y0<y1?[y0,y1]:[y1,y0];
-        for(const xx of cols)
-          for(let yy=ya;yy<=yb;yy++)
-            if(tiles[yy]&&tiles[yy][xx]!=='room') tiles[yy][xx]='hall';
-      }else{       // горизонтальный
-        const rows=[];
-        if(W===2) rows.push(y0,y0+1);
-        else rows.push(y0-1,y0,y0+1);
-        const [xa,xb]=x0<x1?[x0,x1]:[x1,x0];
-        for(const yy of rows)
-          for(let xx=xa;xx<=xb;xx++)
-            if(tiles[yy]&&tiles[yy][xx]!=='room') tiles[yy][xx]='hall';
-      }
-    };
-
-    /* соединяем комнаты */
-    for(const e of edges){
-      const a=rooms[e.i], b=rooms[e.j];
-      const ax=a.x+(a.w>>1), ay=a.y+(a.h>>1);
-      const bx=b.x+(b.w>>1), by=b.y+(b.h>>1);
-      if(Math.random()<0.5){
-        carveHall(ax,ay,bx,ay);
-        carveHall(bx,ay,bx,by);
-      }else{
-        carveHall(ax,ay,ax,by);
-        carveHall(ax,by,bx,by);
-      }
-      // двери - 1-2 клетки вдоль границы
-      const placeDoor=(rx,ry,w,h,dir)=>{
-        const cnt=1+Math.floor(Math.random()*2);
-        for(let k=0;k<cnt;k++){
-          if(dir==='E'||dir==='W'){
-            const yy=ry+Math.floor(Math.random()*h);
-            const xx=dir==='E'?rx+w-1:rx;
-            tiles[yy][xx]='door';
-          }else{
-            const xx=rx+Math.floor(Math.random()*w);
-            const yy=dir==='S'?ry+h-1:ry;
-            tiles[yy][xx]='door';
-          }
+    // --- 3. Убираем одиночные диагонали ------------------------------------
+    for (let y = 1; y < S; y++) {
+      for (let x = 1; x < S; x++) {
+        // если (x,y) и (x-1,y-1) оба проходимы, а соседи по +X и +Y — стены,
+        // заполняем один из диагональных тайлов стеной, чтоб не было «угла»
+        const a = tiles[y  ][x  ], b = tiles[y-1][x-1];
+        if (this._pass(a) && this._pass(b) &&
+            !this._pass(tiles[y-1][x ]) && !this._pass(tiles[y][x-1])) {
+          tiles[y][x] = 'wall';      // ломаем диагональ
         }
-      };
-      if(ax<bx){ placeDoor(a.x,a.y,a.w,a.h,'E'); placeDoor(b.x,b.y,b.w,b.h,'W');}
-      else if(ax>bx){ placeDoor(a.x,a.y,a.w,a.h,'W'); placeDoor(b.x,b.y,b.w,b.h,'E');}
-      else if(ay<by){ placeDoor(a.x,a.y,a.w,a.h,'S'); placeDoor(b.x,b.y,b.w,b.h,'N');}
-      else {         placeDoor(a.x,a.y,a.w,a.h,'N'); placeDoor(b.x,b.y,b.w,b.h,'S');}
+      }
     }
 
     return tiles;
   }
+
+  _pass (t) { return t==='hall'||t==='door'||t==='room'; }
 }
 
 window.GameMap = GameMap;
