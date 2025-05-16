@@ -7,17 +7,18 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Canvas for game rendering -->
   <canvas id="gameCanvas"></canvas>
+  <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- Touch Joystick control -->
-  <div id="joystick">
-    <div id="joystick-knob"></div>
-  </div>
-
-  <!-- Game and control scripts -->
   <script src="map.js"></script>
   <script src="controls.js"></script>
+  <script src="fov.js"></script>
+  <script src="monsters.js"></script>
   <script src="game.js"></script>
+
+  <!-- боевые механики -->
+  <script src="combat/weapons.js"></script>
+  <script src="combat/enemyAI.js"></script>
+  <script src="combat/combatUI.js"></script>
 </body>
 </html>
