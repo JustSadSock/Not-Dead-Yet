@@ -1,141 +1,202 @@
 // ——————————————
-//  Внутренние методы GameMap (фрагмент)
+//  Константы и Canvas
 // ——————————————
+const TILE_SIZE    = 32;           // размер тайла
+const MOVE_SPEED   = 3;            // тайлов/сек
+const FOV_ANGLE    = Math.PI/3;    // 60°
+const FOV_HALF     = FOV_ANGLE/2;
+const FOV_DIST     = 6;            // радиус видимости (тайлы)
+const FADE_RATE    = 1/4;          // memoryAlpha за 4 сек до нуля
+const REGEN_PERIOD = 1.0;          // пакетная перегенерация раз в секунду
 
-/**
- * Генерация одного чанка:
- * 1. Разбросать комнаты (5×5…8×8), без пересечений.
- * 2. Построить MST между центрами.
- * 3. Прорезать L-образные коридоры шириной 2.
- * 4. Обвести каждую комнату и каждый коридор стеной (buffer = 1), чтобы не было «просачивания».
- */
-_generateChunk(cx, cy) {
-  const S = this.chunkSize;
-  // 1) создаём пустое полотно
-  const grid = Array.from({ length: S }, () => Array(S).fill(false));
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+let C_W, C_H;
+window.addEventListener('resize', () => {
+  C_W = canvas.width  = window.innerWidth;
+  C_H = canvas.height = window.innerHeight;
+});
+window.dispatchEvent(new Event('resize'));
 
-  // === 1. Расстановка комнат ===
-  const rooms = [];
-  const roomCount = 3 + Math.floor(Math.random()*5); // 3…7
-  for (let i = 0; i < roomCount; i++) {
-    let tries = 0;
-    while (tries++ < 100) {
-      // треугольное распределение размеров 5…8
-      const randSize = () => 5 + Math.floor((Math.random()+Math.random())/2 * 4);
-      let w = randSize(), h = randSize();
-      // ограничиваем разницу ≦4
-      if (Math.abs(w - h) > 4) h = w;
+// ——————————————
+//  Игрок и ввод
+// ——————————————
+const Input = { dx:0, dy:0 };
+let player = { x:0, y:0, angle:0 };
+window.addEventListener('keydown', e => {
+  if (e.key==='ArrowUp'||e.key==='w')    Input.dy = -1;
+  if (e.key==='ArrowDown'||e.key==='s')  Input.dy = +1;
+  if (e.key==='ArrowLeft'||e.key==='a')  Input.dx = -1;
+  if (e.key==='ArrowRight'||e.key==='d') Input.dx = +1;
+});
+window.addEventListener('keyup', e => {
+  if (/Arrow|w|a|s|d/.test(e.key)) {
+    if (e.key==='ArrowUp'||e.key==='w')   Input.dy = 0;
+    if (e.key==='ArrowDown'||e.key==='s') Input.dy = 0;
+    if (e.key==='ArrowLeft'||e.key==='a') Input.dx = 0;
+    if (e.key==='ArrowRight'||e.key==='d')Input.dx = 0;
+  }
+});
 
-      const x0 = 1 + Math.floor(Math.random()*(S - w - 2));
-      const y0 = 1 + Math.floor(Math.random()*(S - h - 2));
+// ——————————————
+//  Инициализация карты
+// ——————————————
+const gameMap = new GameMap(32);
+gameMap.ensureChunk(0,0);
+player.x = player.y = gameMap.chunkSize/2;
 
-      // проверяем буфер 1 вокруг каждой комнаты
-      let ok = true;
-      for (let [rx,ry,rw,rh] of rooms) {
-        if (!(x0 > rx+rw+1 || x0+w+1 < rx || y0 > ry+rh+1 || y0+h+1 < ry)) {
-          ok = false; break;
+// для пакетной перегенерации
+let lastTime   = performance.now();
+let regenTimer = 0;
+const toRegen  = new Set();
+
+// ——————————————
+//  Основной цикл
+// ——————————————
+function loop(now = performance.now()) {
+  const dt = (now - lastTime)/1000;
+  lastTime = now;
+  regenTimer += dt;
+
+  // 0) Где игрок
+  const pcx = Math.floor(player.x / gameMap.chunkSize),
+        pcy = Math.floor(player.y / gameMap.chunkSize);
+
+  // 1) Предзагрузка чанков в радиусе 2
+  for (let dy=-2; dy<=2; dy++) {
+    for (let dx=-2; dx<=2; dx++) {
+      gameMap.ensureChunk(pcx+dx, pcy+dy);
+    }
+  }
+
+  // 2) Движение
+  let vx = Input.dx, vy = Input.dy;
+  const m = Math.hypot(vx,vy) || 1;
+  vx/=m; vy/=m;
+  if (vx||vy) {
+    player.angle = Math.atan2(vy, vx);
+    const nx = player.x + vx * MOVE_SPEED * dt;
+    const ny = player.y + vy * MOVE_SPEED * dt;
+    if (gameMap.isFloor(Math.floor(nx), Math.floor(player.y))) player.x = nx;
+    if (gameMap.isFloor(Math.floor(player.x), Math.floor(ny))) player.y = ny;
+  }
+
+  // 3) FOV + память
+  const vis = computeFOV(player.x, player.y, player.angle);
+  for (let dy=-1; dy<=1; dy++) {
+    for (let dx=-1; dx<=1; dx++) {
+      const cx  = pcx+dx, cy = pcy+dy;
+      const key = `${cx},${cy}`;
+      const ch  = gameMap.chunks.get(key);
+      if (!ch) continue;
+      const { meta } = ch;
+      const baseX = cx*gameMap.chunkSize;
+      const baseY = cy*gameMap.chunkSize;
+      for (let y=0; y<gameMap.chunkSize; y++) {
+        for (let x=0; x<gameMap.chunkSize; x++) {
+          const gx = baseX + x, gy = baseY + y;
+          const coord = `${gx},${gy}`;
+          const cell  = meta[y][x];
+          if (vis.has(coord)) {
+            cell.visited     = true;
+            cell.memoryAlpha = 1;
+          } else if (cell.memoryAlpha > 0) {
+            cell.memoryAlpha = Math.max(0, cell.memoryAlpha - FADE_RATE*dt);
+            if (cell.memoryAlpha === 0) {
+              toRegen.add(key);
+            }
+          }
         }
       }
-      if (!ok) continue;
-
-      // вырезаем пол
-      for (let yy = y0; yy < y0+h; yy++)
-        for (let xx = x0; xx < x0+w; xx++)
-          grid[yy][xx] = true;
-
-      rooms.push([x0,y0,w,h]);
-      break;
     }
   }
 
-  // === 2. MST между центрами ===
-  const centers = rooms.map(([x,y,w,h]) => ({
-    x: x + Math.floor(w/2),
-    y: y + Math.floor(h/2)
-  }));
-  const N = centers.length;
-  const used = new Set([0]), edges = [];
-  // считаем квадраты расстояний
-  const dist2 = Array(N).fill().map(_=>Array(N).fill(Infinity));
-  for (let i=0;i<N;i++) for(let j=0;j<N;j++) if(i!==j){
-    const dx = centers[i].x-centers[j].x,
-          dy = centers[i].y-centers[j].y;
-    dist2[i][j] = dx*dx+dy*dy;
-  }
-  while (used.size < N) {
-    let best = { i:-1,j:-1,d:Infinity };
-    for (let i of used) for (let j=0;j<N;j++) {
-      if (!used.has(j) && dist2[i][j]<best.d) {
-        best = { i,j,d:dist2[i][j] };
-      }
-    }
-    edges.push([best.i,best.j]);
-    used.add(best.j);
-  }
-
-  // === 3. Прорезка L-коридоров шириной 2 ===
-  for (let [i,j] of edges) {
-    const a = centers[i], b = centers[j];
-    this._carveLCorridor(grid, a.x,a.y, b.x,b.y);
-  }
-
-  // === 4. Обнести комнаты и коридоры стеной (buffer=1) ===
-  // чтобы не было «протечек» через углы
-  const wallGrid = Array.from({ length: S }, () => Array(S).fill(false));
-  for (let y=0;y<S;y++) for (let x=0;x<S;x++) {
-    if (grid[y][x]) {
-      // сам пол остаётся
-      wallGrid[y][x] = true;
-      // вокруг buffer = 1 остаются стены (false)
+  // 4) Пакетная перегенерация один раз в секунду
+  if (regenTimer >= REGEN_PERIOD) {
+    regenTimer -= REGEN_PERIOD;
+    if (toRegen.size) {
+      console.log('>>> Пакет перегенерации:', Array.from(toRegen));
+      gameMap.regenerateChunksPreserveFOV(
+        toRegen,
+        computeFOV,
+        player
+      );
+      console.log('>>> После regen, чанки:', Array.from(gameMap.chunks.keys()));
+      toRegen.clear();
     }
   }
-  // возвращаем только пол (true) — остальное по умолчанию стена
-  return wallGrid;
-},
 
-/**
- * Прорезает L-образный коридор шириной 2 от (x1,y1) до (x2,y2):
- * сначала по Х (горизонтально), потом по Y (вертикально).
- * Максимальная длина сегмента ≦25; если больше — разбивает.
- */
-_carveLCorridor(grid, x1, y1, x2, y2) {
-  const dx = Math.sign(x2 - x1),
-        dy = Math.sign(y2 - y1);
-  const lenX = Math.abs(x2 - x1),
-        lenY = Math.abs(y2 - y1);
+  // 5) Рендер
+  render();
+  requestAnimationFrame(loop);
+}
 
-  // вспомог: прорезать segment вдоль X
-  const carveX = (sx, sy, len) => {
-    if (len > 25) {
-      // разбиваем пополам
-      const mid = Math.floor(len/2);
-      carveX(sx, sy, mid);
-      carveX(sx+dx*mid, sy, len-mid);
-      return;
+// ——————————————
+//  FOV с блокировкой стен
+// ——————————————
+function computeFOV(px, py, angle) {
+  const visible = new Set();
+  const rays = 64;
+  for (let i=0; i<=rays; i++) {
+    const a  = angle - FOV_HALF + (i/rays)*FOV_ANGLE;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let dist = 0;
+    while (dist < FOV_DIST) {
+      const fx = px + dx*dist, fy = py + dy*dist;
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      if (ix<0||iy<0) break;
+      const key = `${ix},${iy}`;
+      visible.add(key);
+      if (!gameMap.isFloor(ix, iy)) break;
+      dist += 0.2;
     }
-    for (let i = 0; i <= len; i++) {
-      const cx = sx + dx*i, cy = sy;
-      if (grid[cy]?.[cx] !== undefined) grid[cy][cx] = true;
-      if (grid[cy+1]?.[cx] !== undefined) grid[cy+1][cx] = true;
-    }
-  };
+  }
+  return visible;
+}
 
-  // вспомог: прорезать segment вдоль Y
-  const carveY = (sx, sy, len) => {
-    if (len > 25) {
-      const mid = Math.floor(len/2);
-      carveY(sx, sy, mid);
-      carveY(sx, sy+dy*mid, len-mid);
-      return;
-    }
-    for (let i = 0; i <= len; i++) {
-      const cx = sx, cy = sy + dy*i;
-      if (grid[cy]?.[cx] !== undefined) grid[cy][cx] = true;
-      if (grid[cy]?.[cx+1] !== undefined) grid[cy][cx+1] = true;
-    }
-  };
+// ——————————————
+//  Рендер
+// ——————————————
+function render() {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0,0,C_W,C_H);
 
-  // делаем L-образно: сначала Х, потом Y
-  carveX(x1, y1, lenX);
-  carveY(x2, y1, lenY);
-},
+  ctx.save();
+  ctx.translate(C_W/2 - player.x*TILE_SIZE,
+                C_H/2 - player.y*TILE_SIZE);
+
+  const vis = computeFOV(player.x, player.y, player.angle);
+  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 1;
+  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 1;
+  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 1;
+  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 1;
+
+  for (let gy=minY; gy<=maxY; gy++) {
+    for (let gx=minX; gx<=maxX; gx++) {
+      if (gx<0||gy<0) continue;
+      const ck = `${Math.floor(gx/gameMap.chunkSize)},${Math.floor(gy/gameMap.chunkSize)}`;
+      if (!gameMap.chunks.has(ck)) continue;
+      const ch   = gameMap.chunks.get(ck);
+      const lx   = gx - Math.floor(gx/gameMap.chunkSize)*gameMap.chunkSize;
+      const ly   = gy - Math.floor(gy/gameMap.chunkSize)*gameMap.chunkSize;
+      const cell = ch.meta[ly][lx];
+      const a    = cell.memoryAlpha;
+      if (a <= 0) continue;
+      ctx.globalAlpha = a;
+      ctx.fillStyle   = ch.tiles[ly][lx] ? "#888" : "#444";
+      ctx.fillRect(gx*TILE_SIZE, gy*TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+  }
+
+  // рисуем игрока
+  ctx.globalAlpha = 1;
+  ctx.fillStyle   = "#f00";
+  ctx.beginPath();
+  ctx.arc(player.x*TILE_SIZE, player.y*TILE_SIZE, TILE_SIZE*0.4, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// стартуем
+requestAnimationFrame(loop);
