@@ -1,186 +1,87 @@
 // game.js
-// ==========================================================
-//  Настройки и Canvas
-// ==========================================================
-const TILE_SIZE    = 32;
-const MOVE_SPEED   = 3;
-const FOV_ANGLE    = Math.PI / 3;
-const FOV_DIST     = 6;
-const FADE_RATE    = 1 / 4;
+import { GameMap } from './map.js';
+
+const TILE_SIZE  = 32;
+const MOVE_SPEED = 3;
+const FOV_ANGLE  = Math.PI/3;
+const FOV_HALF   = FOV_ANGLE/2;
+const FOV_DIST   = 6;
+const FADE_RATE  = 1/4;
 const REGEN_PERIOD = 1.0;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 let C_W, C_H;
-function resize() {
+function onResize() {
   C_W = canvas.width  = window.innerWidth;
   C_H = canvas.height = window.innerHeight;
 }
-window.addEventListener('resize', resize);
-resize();
+window.addEventListener('resize', onResize);
+onResize();
 
-// ==========================================================
-//  Игрок и ввод
-// ==========================================================
-const player = { x:0, y:0, angle:0 };
-const Input  = { dx:0, dy:0 };
+let player = { x:0, y:0, angle:0 };
+window.Input = { dx:0, dy:0 };
 
-// ——— WASD ——————————————————————————
-const k = {};
-document.addEventListener('keydown',  e => k[e.key.toLowerCase()] = true );
-document.addEventListener('keyup',    e => k[e.key.toLowerCase()] = false);
-function readKeyboard() {
-  Input.dx = (k['d']?1:0) - (k['a']?1:0);
-  Input.dy = (k['s']?1:0) - (k['w']?1:0);
-}
+const gameMap = new GameMap();
+gameMap.ensureChunk(0,0);
+player.x = player.y = gameMap.chunkSize/2;
 
-// ——— Джойстик —————————————————————————
-// на вашем <div id="joystick">
-const joyEl = document.getElementById('joystick');
-const knob  = document.getElementById('joystick-knob');
-let   joyId = null;
-let   rect, maxR;
-
-// при инициализации
-function setupJoystick() {
-  rect = joyEl.getBoundingClientRect();
-  maxR = rect.width/2;
-  // центрим «ручку»
-  knob.style.left = `${rect.width/2}px`;
-  knob.style.top  = `${rect.height/2}px`;
-}
-window.addEventListener('load', setupJoystick);
-window.addEventListener('resize', setupJoystick);
-
-joyEl.addEventListener('pointerdown', e => {
-  e.preventDefault();
-  joyEl.setPointerCapture(e.pointerId);
-  joyId = e.pointerId;
-});
-
-joyEl.addEventListener('pointermove', e => {
-  if (e.pointerId !== joyId) return;
-  const cx = rect.left + rect.width/2;
-  const cy = rect.top  + rect.height/2;
-  let dx = e.clientX - cx;
-  let dy = e.clientY - cy;
-  const dist = Math.hypot(dx, dy);
-  const clamped = Math.min(dist, maxR);
-  const nx = dx / maxR;
-  const ny = dy / maxR;
-  Input.dx = nx;
-  Input.dy = ny;
-  // передвинуть ручку
-  const ux = (dist>maxR ? dx/dist*maxR : dx) + rect.width/2;
-  const uy = (dist>maxR ? dy/dist*maxR : dy) + rect.height/2;
-  knob.style.left = `${ux}px`;
-  knob.style.top  = `${uy}px`;
-});
-
-joyEl.addEventListener('pointerup', e => {
-  if (e.pointerId !== joyId) return;
-  joyEl.releasePointerCapture(e.pointerId);
-  joyId = null;
-  Input.dx = Input.dy = 0;
-  // вернуть ручку в центр
-  knob.style.left = `${rect.width/2}px`;
-  knob.style.top  = `${rect.height/2}px`;
-});
-joyEl.addEventListener('pointercancel', e => {
-  joyEl.dispatchEvent(new PointerEvent('pointerup', { pointerId: e.pointerId }));
-});
-
-// ==========================================================
-//  Карта и стартовый спавн
-// ==========================================================
-const gameMap = new GameMap();  // из map/index.js
-const CHUNK   = gameMap.chunkSize;
-
-// гарантированно проходимая старт-позиция
-function findSpawn() {
-  gameMap.ensureChunk(0, 0);
-  const tiles = gameMap.chunks.get('0,0').tiles;
-  const cx = (CHUNK/2)|0, cy = (CHUNK/2)|0;
-  const R  = CHUNK/2;
-  for (let r = 0; r <= R; r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const x = cx + dx, y = cy + dy;
-        if (x<0||y<0||x>=CHUNK||y>=CHUNK) continue;
-        const t = tiles[y][x];
-        if (t==='room' || t==='hall' || t==='door') {
-          return { x: x + 0.5, y: y + 0.5 };
-        }
-      }
-    }
-  }
-  return { x: cx+0.5, y: cy+0.5 };
-}
-
-Object.assign(player, findSpawn());
-player.angle = 0;
-
-// таймеры регена и FOV
-let lastT = performance.now();
-let regenT = 0;
+let lastTime = performance.now(), regenTimer = 0;
 const toRegen = new Set();
 
-// ==========================================================
-//  Основной цикл
-// ==========================================================
 function loop(now = performance.now()) {
-  const dt = (now - lastT) / 1000;
-  lastT = now;
-  regenT += dt;
+  const dt = (now - lastTime)/1000;
+  lastTime = now;
+  regenTimer += dt;
 
-  readKeyboard();
+  const pcx = Math.floor(player.x / gameMap.chunkSize),
+        pcy = Math.floor(player.y / gameMap.chunkSize);
 
-  const pcx = Math.floor(player.x / CHUNK),
-        pcy = Math.floor(player.y / CHUNK);
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++)
+      gameMap.ensureChunk(pcx+dx, pcy+dy);
 
-  // догрузка соседних чанков
-  for (let oy = -2; oy <= 2; oy++) {
-    for (let ox = -2; ox <= 2; ox++) {
-      gameMap.ensureChunk(pcx + ox, pcy + oy);
-    }
-  }
-
-  // движение
-  let { dx, dy } = Input;
-  const mag = Math.hypot(dx, dy) || 1;
-  dx /= mag; dy /= mag;
-  if (dx || dy) {
-    player.angle = Math.atan2(dy, dx);
-    const nx = player.x + dx * MOVE_SPEED * dt;
-    if (gameMap.isFloor(nx|0, player.y|0)) player.x = nx;
-    const ny = player.y + dy * MOVE_SPEED * dt;
-    if (gameMap.isFloor(player.x|0, ny|0)) player.y = ny;
+  // движение WASD
+  let vx = Input.dx, vy = Input.dy;
+  const m = Math.hypot(vx,vy)||1;
+  vx/=m; vy/=m;
+  if (vx||vy) {
+    player.angle = Math.atan2(vy,vx);
+    const nx = player.x + vx*MOVE_SPEED*dt;
+    const ny = player.y + vy*MOVE_SPEED*dt;
+    if (gameMap.isFloor(Math.floor(nx), Math.floor(player.y)))
+      player.x = nx;
+    if (gameMap.isFloor(Math.floor(player.x), Math.floor(ny)))
+      player.y = ny;
   }
 
   // FOV + память
   const vis = computeFOV(player.x, player.y, player.angle);
-  for (const [key, ch] of gameMap.chunks) {
-    const [cx, cy] = key.split(',').map(Number);
-    const bx = cx * CHUNK, by = cy * CHUNK;
-    for (let y = 0; y < CHUNK; y++) {
-      for (let x = 0; x < CHUNK; x++) {
-        const meta = ch.meta[y][x];
-        const coord = `${bx + x},${by + y}`;
-        if (vis.has(coord)) {
-          meta.visited = true;
-          meta.memoryAlpha = 1;
-        } else if (meta.memoryAlpha > 0) {
-          meta.memoryAlpha = Math.max(0, meta.memoryAlpha - FADE_RATE * dt);
-          if (meta.memoryAlpha === 0) toRegen.add(key);
-        }
+  for (let dy=-1; dy<=1; dy++) for (let dx=-1; dx<=1; dx++) {
+    const cx=pcx+dx, cy=pcy+dy;
+    const key = `${cx},${cy}`;
+    const chunk = gameMap.chunks.get(key);
+    if (!chunk) continue;
+    const meta = chunk.meta;
+    const baseX = cx*gameMap.chunkSize,
+          baseY = cy*gameMap.chunkSize;
+    for (let y=0;y<gameMap.chunkSize;y++)for(let x=0;x<gameMap.chunkSize;x++){
+      const gx=baseX+x, gy=baseY+y, coord = `${gx},${gy}`,
+            cell = meta[y][x];
+      if (vis.has(coord)) {
+        cell.visited = true;
+        cell.memoryAlpha = 1;
+      } else if (cell.memoryAlpha>0) {
+        cell.memoryAlpha = Math.max(0, cell.memoryAlpha - FADE_RATE*dt);
+        if (cell.memoryAlpha===0) toRegen.add(key);
       }
     }
   }
 
-  // пакетная регенерация
-  if (regenT >= REGEN_PERIOD) {
-    regenT -= REGEN_PERIOD;
+  if (regenTimer >= REGEN_PERIOD) {
+    regenTimer -= REGEN_PERIOD;
     if (toRegen.size) {
+      console.log('>>> regen:', Array.from(toRegen));
       gameMap.regenerateChunksPreserveFOV(toRegen, computeFOV, player);
       toRegen.clear();
     }
@@ -190,74 +91,65 @@ function loop(now = performance.now()) {
   requestAnimationFrame(loop);
 }
 
-// ==========================================================
-//  FOV
-// ==========================================================
-function computeFOV(px, py, angle) {
-  const visible = new Set();
-  const half = FOV_ANGLE/2, steps = 64;
-  for (let i = 0; i <= steps; i++) {
-    const a = angle - half + (i/steps)*FOV_ANGLE;
-    const dx = Math.cos(a), dy = Math.sin(a);
-    let d = 0;
-    while (d < FOV_DIST) {
-      const gx = Math.floor(px + dx*d),
-            gy = Math.floor(py + dy*d);
-      visible.add(`${gx},${gy}`);
-      if (!gameMap.isFloor(gx, gy)) break;
-      d += 0.2;
+function computeFOV(px,py,angle) {
+  const vis = new Set(), steps=64;
+  for (let i=0;i<=steps;i++){
+    const a=angle-FOV_HALF+(i/steps)*FOV_ANGLE,
+          dx=Math.cos(a), dy=Math.sin(a);
+    let dist=0;
+    while(dist<FOV_DIST){
+      const fx=px+dx*dist, fy=py+dy*dist,
+            ix=Math.floor(fx), iy=Math.floor(fy);
+      vis.add(`${ix},${iy}`);
+      if (!gameMap.isFloor(ix,iy)) break;
+      dist += 0.2;
     }
   }
-  return visible;
+  return vis;
 }
 
-// ==========================================================
-//  Рендер
-// ==========================================================
-function render() {
-  ctx.fillStyle = '#000';
+function render(){
+  ctx.fillStyle = "#000";
   ctx.fillRect(0,0,C_W,C_H);
 
   ctx.save();
-  ctx.translate(C_W/2 - player.x*TILE_SIZE, C_H/2 - player.y*TILE_SIZE);
+  ctx.translate(C_W/2-player.x*TILE_SIZE,
+                C_H/2-player.y*TILE_SIZE);
 
   const vis = computeFOV(player.x, player.y, player.angle);
-  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 1;
-  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 1;
-  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 1;
-  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 1;
+  const minX = Math.floor(player.x - C_W/TILE_SIZE/2)-1;
+  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2)+1;
+  const minY = Math.floor(player.y - C_H/TILE_SIZE/2)-1;
+  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2)+1;
 
-  for (let gy = minY; gy <= maxY; gy++) {
-    for (let gx = minX; gx <= maxX; gx++) {
-      const ck = `${Math.floor(gx/CHUNK)},${Math.floor(gy/CHUNK)}`;
-      const ch = gameMap.chunks.get(ck);
-      if (!ch) continue;
-      const lx = ((gx % CHUNK)+CHUNK)%CHUNK;
-      const ly = ((gy % CHUNK)+CHUNK)%CHUNK;
-      const cell = ch.meta[ly][lx];
-      if (cell.memoryAlpha <= 0) continue;
-
-      const t = ch.tiles[ly][lx];
-      let col = '#222';
-      if (t === 'hall') col = '#5e5e5e';
-      else if (t === 'door') col = '#cfa35e';
-      else if (t === 'room') col = '#3e7eaa';
-
-      ctx.globalAlpha = cell.memoryAlpha;
-      ctx.fillStyle   = col;
-      ctx.fillRect(gx*TILE_SIZE, gy*TILE_SIZE, TILE_SIZE, TILE_SIZE);
+  for (let gy=minY; gy<=maxY; gy++){
+    for (let gx=minX; gx<=maxX; gx++){
+      const px=gx*TILE_SIZE, py=gy*TILE_SIZE;
+      const ck = `${Math.floor(gx/gameMap.chunkSize)},${Math.floor(gy/gameMap.chunkSize)}`;
+      if (!gameMap.chunks.has(ck)) continue;
+      const ch = gameMap.chunks.get(ck),
+            lx = gx - Math.floor(gx/gameMap.chunkSize)*gameMap.chunkSize,
+            ly = gy - Math.floor(gy/gameMap.chunkSize)*gameMap.chunkSize;
+      const tile = ch.tiles[ly][lx],
+            α = ch.meta[ly][lx].memoryAlpha;
+      if (α<=0) continue;
+      ctx.globalAlpha = α;
+      // цвета: комната, коридор, дверь, стена
+      switch(tile){
+        case 'room': ctx.fillStyle = "#334455"; break;
+        case 'hall': ctx.fillStyle = "#556677"; break;
+        case 'door': ctx.fillStyle = "#aa8855"; break;
+        default:      ctx.fillStyle = "#222";     break;
+      }
+      ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
     }
   }
 
-  // игрок
   ctx.globalAlpha = 1;
-  ctx.fillStyle   = '#ff1e1e';
+  ctx.fillStyle = "#f00";
   ctx.beginPath();
-  ctx.arc(
-    player.x*TILE_SIZE,
-    player.y*TILE_SIZE,
-    TILE_SIZE*0.35, 0, Math.PI*2
-  );
+  ctx.arc(player.x*TILE_SIZE, player.y*TILE_SIZE,
+          TILE_SIZE*0.4, 0, Math.PI*2);
   ctx.fill();
 
   ctx.restore();
