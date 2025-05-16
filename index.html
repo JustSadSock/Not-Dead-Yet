@@ -2,23 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, user-scalable=no"
+  />
   <title>Shifting Labyrinth Game</title>
   <link rel="stylesheet" href="style.css" />
+  <style>
+    /* чтобы canvas и joystick всегда были на всю высоту без полос прокрутки */
+    html, body { margin:0; overflow:hidden; height:100%; }
+    canvas { display:block; }
+  </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
   <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <script src="map.js"></script>
-  <script src="controls.js"></script>
-  <script src="fov.js"></script>
-  <script src="monsters.js"></script>
-  <script src="game.js"></script>
+  <!-- 1) map.js как ES-модуль, он импортит your /map/index.js + остальные map/* -->
+  <script type="module" src="map.js"></script>
+
+  <!-- 2) классические скрипты — с defer, чтобы выполнялись после module -->
+  <script src="controls.js" defer></script>
+  <script src="fov.js"       defer></script>
+  <script src="monsters.js"  defer></script>
+  <script src="game.js"      defer></script>
 
   <!-- боевые механики -->
-  <script src="combat/weapons.js"></script>
-  <script src="combat/enemyAI.js"></script>
-  <script src="combat/combatUI.js"></script>
+  <script src="combat/weapons.js"  defer></script>
+  <script src="combat/enemyAI.js"  defer></script>
+  <script src="combat/combatUI.js" defer></script>
 </body>
 </html>
