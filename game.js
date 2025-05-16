@@ -1,60 +1,72 @@
 // game.js
-
-if (!window.Input) window.Input = { dx:0, dy:0 };
-
-// Добавляем управление по клавишам WASD
-const keyState = { w:0, a:0, s:0, d:0 };
-window.addEventListener('keydown', e => {
-  if (e.key === 'w') keyState.w = 1;
-  if (e.key === 'a') keyState.a = 1;
-  if (e.key === 's') keyState.s = 1;
-  if (e.key === 'd') keyState.d = 1;
-  window.Input.dx = keyState.d - keyState.a;
-  window.Input.dy = keyState.s - keyState.w;
-});
-window.addEventListener('keyup', e => {
-  if (e.key === 'w') keyState.w = 0;
-  if (e.key === 'a') keyState.a = 0;
-  if (e.key === 's') keyState.s = 0;
-  if (e.key === 'd') keyState.d = 0;
-  window.Input.dx = keyState.d - keyState.a;
-  window.Input.dy = keyState.s - keyState.w;
-});
+// ——————————————
+//  Глобальные структуры ввода  (объявляем в самом верху!)
+// ——————————————
+let player = { x: 0, y: 0, angle: 0 };
+let Input  = { dx: 0, dy: 0 };        // заполняется WASD-клавишами и джойстиком
 
 // ——————————————
-// Инициализация карты
+//  Константы и Canvas
+// ——————————————
+const TILE_SIZE    = 32;
+const MOVE_SPEED   = 3;
+const FOV_ANGLE    = Math.PI / 3;
+const FOV_HALF     = FOV_ANGLE / 2;
+const FOV_DIST     = 6;
+const FADE_RATE    = 1 / 4;
+const REGEN_PERIOD = 1.0;
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+let C_W, C_H;
+function onResize() {
+  C_W = canvas.width  = window.innerWidth;
+  C_H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+// ——————————————
+//  Клавиатура (W-A-S-D)
+// ——————————————
+const keyState = {};
+window.addEventListener('keydown', e => { keyState[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup',   e => { keyState[e.key.toLowerCase()] = false; });
+
+// ——————————————
+//  Инициализация карты
 // ——————————————
 const gameMap = new GameMap();
 gameMap.ensureChunk(0, 0);
-// Ставим игрока в центр начального чанка (округляем вниз)
-player.x = player.y = Math.floor(gameMap.chunkSize / 2);
+player.x = player.y = gameMap.chunkSize / 2;
 
-// Таймер и набор для пакетной перегенерации
+// таймер и набор для перегенерации
 let lastTime   = performance.now();
 let regenTimer = 0;
 const toRegen  = new Set();
 
 // ——————————————
-// Основной цикл
+//  Основной цикл
 // ——————————————
 function loop(now = performance.now()) {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
   regenTimer += dt;
 
-  // 0) Текущий чанк
-  const pcx = Math.floor(player.x / gameMap.chunkSize),
-        pcy = Math.floor(player.y / gameMap.chunkSize);
+  // 1) ввод (клавиатура + джой-стик)
+  Input.dx = (keyState['d'] ? 1 : 0) - (keyState['a'] ? 1 : 0);
+  Input.dy = (keyState['s'] ? 1 : 0) - (keyState['w'] ? 1 : 0);
+  // (логика виртуального джой-стика должна где-то менять Input.dx/dy — оставлена как была)
 
-  // 1) Предзагрузка в радиусе чанков
-  const CHUNK_RADIUS = 2;   // 5×5 чанков
-  for (let dy = -CHUNK_RADIUS; dy <= CHUNK_RADIUS; dy++) {
-    for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx++) {
+  // 2) прогрузка чанков вокруг
+  const pcx = Math.floor(player.x / gameMap.chunkSize);
+  const pcy = Math.floor(player.y / gameMap.chunkSize);
+  const R   = 2;                       // радиус пред-загрузки
+  for (let dy = -R; dy <= R; dy++)
+    for (let dx = -R; dx <= R; dx++)
       gameMap.ensureChunk(pcx + dx, pcy + dy);
-    }
-  }
 
-  // 2) Движение
+  // 3) движение
   let vx = Input.dx, vy = Input.dy;
   const mag = Math.hypot(vx, vy) || 1;
   vx /= mag; vy /= mag;
@@ -66,59 +78,74 @@ function loop(now = performance.now()) {
     if (gameMap.isFloor(Math.floor(player.x), Math.floor(ny))) player.y = ny;
   }
 
-  // 3) FOV + память тайлов
+  // 4) FOV + запоминание тайлов
   const vis = computeFOV(player.x, player.y, player.angle);
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
-      const cx  = pcx + dx, cy = pcy + dy;
-      const key = `${cx},${cy}`;
-      const chunk = gameMap.chunks.get(key);
+      const cx = pcx + dx, cy = pcy + dy;
+      const chunk = gameMap.chunks.get(`${cx},${cy}`);
       if (!chunk) continue;
-      const meta  = chunk.meta;
       const baseX = cx * gameMap.chunkSize;
       const baseY = cy * gameMap.chunkSize;
+
       for (let y = 0; y < gameMap.chunkSize; y++) {
         for (let x = 0; x < gameMap.chunkSize; x++) {
           const gx = baseX + x, gy = baseY + y;
-          const coord = `${gx},${gy}`;
-          const cell  = meta[y][x];
-          if (vis.has(coord)) {
-            cell.visited     = true;
-            cell.memoryAlpha = 1;
-          } else if (cell.memoryAlpha > 0) {
-            cell.memoryAlpha = Math.max(0, cell.memoryAlpha - FADE_RATE * dt);
-            if (cell.memoryAlpha === 0) {
-              toRegen.add(key);
-            }
+          const m  = chunk.meta[y][x];
+
+          if (vis.has(`${gx},${gy}`)) {
+            m.visited     = true;
+            m.memoryAlpha = 1;
+          } else if (m.memoryAlpha > 0) {
+            m.memoryAlpha = Math.max(0, m.memoryAlpha - FADE_RATE * dt);
+            if (m.memoryAlpha === 0) toRegen.add(`${cx},${cy}`);
           }
         }
       }
     }
   }
 
-  // 4) Пакетная регенерация забытых чанков
-  if (regenTimer >= REGEN_PERIOD) {
-    regenTimer -= REGEN_PERIOD;
-    if (toRegen.size) {
-      console.log(">>> Пакет перегенерации:", Array.from(toRegen));
-      gameMap.regenerateChunksPreserveFOV(
-        toRegen,
-        computeFOV,
-        { x: player.x, y: player.y, angle: player.angle }
-      );
-      console.log(">>> После regen, чанки:", Array.from(gameMap.chunks.keys()));
-      toRegen.clear();
-    }
+  // 5) пакетная перегенерация
+  if (regenTimer >= REGEN_PERIOD && toRegen.size) {
+    regenTimer = 0;
+    gameMap.regenerateChunksPreserveFOV(
+      toRegen,
+      computeFOV,
+      { x: player.x, y: player.y, angle: player.angle }
+    );
+    toRegen.clear();
   }
 
-  // 5) Рендер
   render();
   requestAnimationFrame(loop);
 }
 
-// Функция отрисовки
+// ——————————————
+//  Field-of-View
+// ——————————————
+function computeFOV(px, py, angle) {
+  const visible = new Set();
+  const steps = 64;
+  for (let i = 0; i <= steps; i++) {
+    const a  = angle - FOV_HALF + (i / steps) * FOV_ANGLE;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let dist = 0;
+    while (dist < FOV_DIST) {
+      const fx = px + dx * dist, fy = py + dy * dist;
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      visible.add(`${ix},${iy}`);
+      if (!gameMap.isFloor(ix, iy)) break;
+      dist += 0.25;
+    }
+  }
+  return visible;
+}
+
+// ——————————————
+//  Рендер
+// ——————————————
 function render() {
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, C_W, C_H);
 
   ctx.save();
@@ -126,50 +153,38 @@ function render() {
                 C_H/2 - player.y*TILE_SIZE);
 
   const vis = computeFOV(player.x, player.y, player.angle);
-  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 1;
-  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 1;
-  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 1;
-  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 1;
+  const minX = Math.floor(player.x - C_W/TILE_SIZE/2) - 2;
+  const maxX = Math.floor(player.x + C_W/TILE_SIZE/2) + 2;
+  const minY = Math.floor(player.y - C_H/TILE_SIZE/2) - 2;
+  const maxY = Math.floor(player.y + C_H/TILE_SIZE/2) + 2;
 
   for (let gy = minY; gy <= maxY; gy++) {
     for (let gx = minX; gx <= maxX; gx++) {
-      const px = gx * TILE_SIZE, py = gy * TILE_SIZE;
       const ck = `${Math.floor(gx/gameMap.chunkSize)},${Math.floor(gy/gameMap.chunkSize)}`;
-      if (!gameMap.chunks.has(ck)) continue;
-      const ch   = gameMap.chunks.get(ck);
-      const lx   = gx - Math.floor(gx/gameMap.chunkSize) * gameMap.chunkSize;
-      const ly   = gy - Math.floor(gy/gameMap.chunkSize) * gameMap.chunkSize;
-      const cell = ch.meta[ly][lx];
-      const α    = cell.memoryAlpha;
-      if (α <= 0) continue;
-      ctx.globalAlpha = α;
+      const chunk = gameMap.chunks.get(ck); if (!chunk) continue;
+      const lx = gx - Math.floor(gx/gameMap.chunkSize)*gameMap.chunkSize;
+      const ly = gy - Math.floor(gy/gameMap.chunkSize)*gameMap.chunkSize;
+      const m  = chunk.meta[ly][lx];
+      if (m.memoryAlpha <= 0) continue;
 
-      // Выбираем цвет по типу тайла
-      const tileType = ch.tiles[ly][lx];
-      if (tileType === 'wall') {
-        ctx.fillStyle = "#444";         // тёмно-серый – стены
-      } else if (tileType === 'hall') {
-        ctx.fillStyle = "#888";         // серый – коридор
-      } else if (tileType === 'room') {
-        ctx.fillStyle = "#6699cc";      // приглушённо-синий – комната
-      } else if (tileType === 'door') {
-        ctx.fillStyle = "#cc9933";      // охра – дверь
-      } else {
-        ctx.fillStyle = "#000";         // на всякий – чёрный
-      }
-      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+      ctx.globalAlpha = m.memoryAlpha;
+      const t = chunk.tiles[ly][lx];
+      ctx.fillStyle =
+          t === 'room' ? '#214'
+        : t === 'door' ? '#533'
+        : t === 'hall' ? '#666'
+        : /*wall*/       '#333';
+      ctx.fillRect(gx*TILE_SIZE, gy*TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 
-  // Рисуем игрока (красным)
   ctx.globalAlpha = 1;
-  ctx.fillStyle   = "#f00";
+  ctx.fillStyle   = '#f00';
   ctx.beginPath();
-  ctx.arc(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE*0.4, 0, Math.PI*2);
+  ctx.arc(player.x*TILE_SIZE, player.y*TILE_SIZE, TILE_SIZE*0.4, 0, Math.PI*2);
   ctx.fill();
-
   ctx.restore();
 }
 
-// Старт игры
+// ——————————————
 requestAnimationFrame(loop);
