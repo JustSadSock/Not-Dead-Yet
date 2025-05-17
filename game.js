@@ -155,4 +155,13 @@ function render(){
   ctx.restore();
 }
 
+// --- Expose globals for legacy scripts ---
+window.ctx     = ctx;
+window.gameMap = gameMap;
+window.player  = player;
+window.TILE_SIZE = TILE_SIZE;
+window.C_W     = C_W;
+window.C_H     = C_H;
+// (window.monsters уже создаётся в monsters.js,
+// window.computeFOV — в fov.js, так что их трогать не нужно)
 requestAnimationFrame(loop);
