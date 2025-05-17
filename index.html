@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Shifting Labyrinth Game</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -11,13 +10,26 @@
   <canvas id="gameCanvas"></canvas>
   <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- Модули ES6 -->
-  <script type="module" src="map.js"></script>
-  <script type="module" src="game.js"></script>
+  <!-- Utilities (random, helpers, etc.) -->
+  <script src="utils.js"></script>
 
-  <!-- остальные скрипты -->
+  <!-- Room generation → Hall (corridor) generation → Door placement → Cleanup/validation -->
+  <script src="rooms.js"></script>
+  <script src="halls.js"></script>
+  <script src="doors.js"></script>
+  <script src="cleanup.js"></script>
+
+  <!-- Core map manager (assembles above steps into chunks) -->
+  <script src="map.js"></script>
+
+  <!-- Input & FOV -->
   <script src="controls.js"></script>
   <script src="fov.js"></script>
+
+  <!-- Main game loop, rendering, movement, chunk prefetch, regen logic -->
+  <script src="game.js"></script>
+
+  <!-- Monsters, combat systems -->
   <script src="monsters.js"></script>
   <script src="combat/weapons.js"></script>
   <script src="combat/enemyAI.js"></script>
