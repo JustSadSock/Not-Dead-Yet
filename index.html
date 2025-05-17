@@ -1,35 +1,31 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Not-Dead-Yet</title>
-  <!-- Стили -->
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Полотно для игры -->
   <canvas id="gameCanvas"></canvas>
-  <!-- Джойстик для мобильных -->
   <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- Модули генерации карты (из папки map/) -->
-  <!-- Подставьте сюда точно те файлы, что лежат в map/ -->
-  <script src="map/validator.js"></script>
-  <!-- <script src="map/другойМодуль.js"></script> -->
-  <!-- ... -->
+  <!-- 1) ES-модуль карты — главный экспорт GameMap -->
+  <script type="module" src="./map/index.js"></script> <!-- index.js](file-service://file-Abgb2kSYP5hB4SeZUtrMsi) -->
 
-  <!-- Основной скрипт генерации лабиринта -->
-  <script src="map.js"></script>
+  <!-- 2) ES-модуль игрового цикла — теперь импортируем GameMap из map/index.js -->
+  <script type="module" src="./game.js"></script>        <!-- скорректируйте import в game.js:
+                                                           import { GameMap } from './map/index.js'; -->
 
-  <!-- Обработка управления и расчёт FOV -->
-  <script src="controls.js"></script>
+  <!-- 3) Plain-скрипты управления, FOV и монстров -->
+  <script src="controls.js"></script>                    <!-- game.js](file-service://file-62uNbgQ28hDVj6owSCB6g6) -->
   <script src="fov.js"></script>
-
-  <!-- Спавн и поведение «монстров» -->
   <script src="monsters.js"></script>
 
-  <!-- Главный игровой цикл -->
-  <script src="game.js"></script>
+  <!-- 4) Боевая система (monkey-patch главного цикла) -->
+  <script src="combat/weapons.js"></script>
+  <script src="combat/enemyAI.js"></script>
+  <script src="combat/combatUI.js"></script>
 </body>
 </html>
