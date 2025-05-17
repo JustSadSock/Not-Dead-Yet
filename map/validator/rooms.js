@@ -71,3 +71,4 @@ function carveCorridor(tiles, a, b) {
     y += Math.sign(ty-y);
   }
 }
+export { carveRoomsAndHalls as findRooms };
