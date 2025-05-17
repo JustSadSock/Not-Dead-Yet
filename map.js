@@ -1,20 +1,26 @@
 // map.js
-// --------------------------------------------------
-// ES-модуль: экспортируем GameMap
-// --------------------------------------------------
+// ES-модуль: только генерация, без ctx и без render
 
 /**
- * carveRoomsAndHalls, placeAndValidateDoors и все вспомогательные
- * вынесены прямо сюда, чтобы не было import/export внутри IIFE.
+ * Проверяет, накладывается ли прямоугольник [x,y,w,h] на r
  */
 function rectanglesOverlap(x, y, w, h, r) {
-  return !(r.minX > x + w || r.maxX < x || r.minY > y + h || r.maxY < y);
+  return !(r.minX > x + w - 1 || r.maxX < x ||
+           r.minY > y + h - 1 || r.maxY < y);
 }
+
+/**
+ * Выбирает случайное целое из [min..max], с пикированием к середине.
+ */
 function weightedRandom(min, max) {
   const r = Math.random(), w = Math.random();
   const v = min + (max - min) * ((r + w) / 2);
-  return Math.min(max, Math.max(min, Math.floor(v)));
+  return Math.floor(Math.max(min, Math.min(max, v)));
 }
+
+/**
+ * Вырезает в массиве tiles (строка «hall») коридор из центра a в центр b.
+ */
 function carveCorridor(tiles, a, b) {
   let x = Math.floor((a.minX + a.maxX) / 2);
   let y = Math.floor((a.minY + a.maxY) / 2);
@@ -35,14 +41,13 @@ function carveCorridor(tiles, a, b) {
   }
 }
 
+/**
+ * Генерирует список rooms + массив tiles размером S×S с 'wall' по умолчанию.
+ */
 function carveRoomsAndHalls(S) {
-  // 1) инициализируем всё как стена
   const tiles = Array.from({ length: S }, () => Array(S).fill('wall'));
-
-  // 2) параметры комнат
-  const ROOM_MIN = 4;
-  const ROOM_MAX = 8;
-  const ROOM_COUNT = 3 + Math.floor(Math.random() * 6); // от 3 до 8
+  const ROOM_MIN = 4, ROOM_MAX = 8;
+  const ROOM_COUNT = 3 + Math.floor(Math.random() * 6); // 3..8
   const rooms = [];
 
   for (let i = 0; i < ROOM_COUNT; i++) {
@@ -51,14 +56,16 @@ function carveRoomsAndHalls(S) {
     const x = 1 + Math.floor(Math.random() * (S - w - 2));
     const y = 1 + Math.floor(Math.random() * (S - h - 2));
 
-    // проверяем запас в 1 клетку вокруг
+    // проверяем буфер в 1 клетку вокруг
     if (rooms.some(r => rectanglesOverlap(x - 1, y - 1, w + 2, h + 2, r))) {
       i--;
       continue;
     }
-    rooms.push({ minX: x, minY: y, maxX: x + w - 1, maxY: y + h - 1 });
 
-    // вырезаем пол комнаты
+    const room = { minX: x, minY: y, maxX: x + w - 1, maxY: y + h - 1 };
+    rooms.push(room);
+
+    // заполняем room
     for (let yy = y; yy < y + h; yy++) {
       for (let xx = x; xx < x + w; xx++) {
         tiles[yy][xx] = 'room';
@@ -66,7 +73,7 @@ function carveRoomsAndHalls(S) {
     }
   }
 
-  // 3) соединяем последовательные комнаты коридорами
+  // соединяем последовательно все комнаты коридорами
   for (let i = 1; i < rooms.length; i++) {
     carveCorridor(tiles, rooms[i - 1], rooms[i]);
   }
@@ -74,41 +81,46 @@ function carveRoomsAndHalls(S) {
   return { tiles, rooms };
 }
 
-function placeAndValidateDoors(tiles, rooms, S) {
+/**
+ * Ставит двери ('door') на стыке room↔hall, максимум по 2 на сторону.
+ */
+function placeAndValidateDoors(tiles, rooms) {
   const doors = [];
 
   for (let room of rooms) {
-    // собираем список клеток по периметру, где сосед есть hall
     const candidates = [];
+
     // верх/низ
     for (let x = room.minX; x <= room.maxX; x++) {
       if (tiles[room.minY - 1]?.[x] === 'hall') candidates.push([x, room.minY]);
       if (tiles[room.maxY + 1]?.[x] === 'hall') candidates.push([x, room.maxY]);
     }
-    // левый/правый
+    // лево/право
     for (let y = room.minY; y <= room.maxY; y++) {
       if (tiles[y][room.minX - 1] === 'hall') candidates.push([room.minX, y]);
       if (tiles[y][room.maxX + 1] === 'hall') candidates.push([room.maxX, y]);
     }
 
-    // валидируем: не более 2 дверей подряд
+    // валидируем не более 2 дверей подряд
     const used = [];
     for (let [x, y] of candidates) {
       if (used.length >= 2) break;
-      // соседей дверей по периметру у нас пока нет ⇒ просто берём первые два
       if (tiles[y][x] === 'room') {
         tiles[y][x] = 'door';
         used.push([x, y]);
       }
     }
-    for (let d of used) doors.push({ x: d[0], y: d[1], room });
+    for (let [x, y] of used) {
+      doors.push({ x, y, room });
+    }
   }
 
-  console.log('placeAndValidateDoors → doors:', doors);
+  console.log('placeAndValidateDoors →', doors);
   return doors;
 }
 
 
+// собственно класс карты
 export class GameMap {
   constructor() {
     this.chunkSize = 32;
@@ -122,7 +134,7 @@ export class GameMap {
     this.generating.add(key);
 
     const { tiles, rooms } = carveRoomsAndHalls(this.chunkSize);
-    placeAndValidateDoors(tiles, rooms, this.chunkSize);
+    placeAndValidateDoors(tiles, rooms);
 
     const meta = Array.from({ length: this.chunkSize }, () =>
       Array.from({ length: this.chunkSize }, () => ({
@@ -138,20 +150,20 @@ export class GameMap {
   isFloor(gx, gy) {
     const cx = Math.floor(gx / this.chunkSize);
     const cy = Math.floor(gy / this.chunkSize);
-    const key = `${cx},${cy}`;
-    const chunk = this.chunks.get(key);
+    const chunk = this.chunks.get(`${cx},${cy}`);
     if (!chunk) return false;
     const lx = gx - cx * this.chunkSize;
     const ly = gy - cy * this.chunkSize;
-    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize)
+    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) {
       return false;
-    // пол = room || hall || door
+    }
     const t = chunk.tiles[ly][lx];
     return t === 'room' || t === 'hall' || t === 'door';
   }
 
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
     const vis = computeFOV(player.x, player.y, player.angle);
+
     for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
       const oldC = this.chunks.get(key);
