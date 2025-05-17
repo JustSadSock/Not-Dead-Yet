@@ -11,21 +11,18 @@
   <canvas id="gameCanvas"></canvas>
   <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- 1) ES-модуль карты — главный экспорт GameMap -->
-  <script type="module" src="./map/index.js"></script> <!-- index.js](file-service://file-Abgb2kSYP5hB4SeZUtrMsi) -->
+  <!-- 1) ES-модули карты и цикла -->
+  <script type="module" src="./map.js"></script>
+  <script type="module" src="./game.js"></script>
 
-  <!-- 2) ES-модуль игрового цикла — теперь импортируем GameMap из map/index.js -->
-  <script type="module" src="./game.js"></script>        <!-- скорректируйте import в game.js:
-                                                           import { GameMap } from './map/index.js'; -->
+  <!-- 2) Простые скрипты -->
+  <script src="./controls.js"></script>
+  <script src="./fov.js"></script>
+  <script src="./monsters.js"></script>
 
-  <!-- 3) Plain-скрипты управления, FOV и монстров -->
-  <script src="controls.js"></script>                    <!-- game.js](file-service://file-62uNbgQ28hDVj6owSCB6g6) -->
-  <script src="fov.js"></script>
-  <script src="monsters.js"></script>
-
-  <!-- 4) Боевая система (monkey-patch главного цикла) -->
-  <script src="combat/weapons.js"></script>
-  <script src="combat/enemyAI.js"></script>
-  <script src="combat/combatUI.js"></script>
+  <!-- 3) Combat (без module) -->
+  <script src="./combat/weapons.js"></script>
+  <script src="./combat/enemyAI.js"></script>
+  <script src="./combat/combatUI.js"></script>
 </body>
 </html>
