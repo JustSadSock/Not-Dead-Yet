@@ -1,38 +1,35 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Shifting Labyrinth Game</title>
+  <title>Not-Dead-Yet</title>
+  <!-- Стили -->
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Полотно для игры -->
   <canvas id="gameCanvas"></canvas>
+  <!-- Джойстик для мобильных -->
   <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- Utilities (random, helpers, etc.) -->
-  <script src="utils.js"></script>
+  <!-- Модули генерации карты (из папки map/) -->
+  <!-- Подставьте сюда точно те файлы, что лежат в map/ -->
+  <script src="map/validator.js"></script>
+  <!-- <script src="map/другойМодуль.js"></script> -->
+  <!-- ... -->
 
-  <!-- Room generation → Hall (corridor) generation → Door placement → Cleanup/validation -->
-  <script src="rooms.js"></script>
-  <script src="halls.js"></script>
-  <script src="doors.js"></script>
-  <script src="cleanup.js"></script>
-
-  <!-- Core map manager (assembles above steps into chunks) -->
+  <!-- Основной скрипт генерации лабиринта -->
   <script src="map.js"></script>
 
-  <!-- Input & FOV -->
+  <!-- Обработка управления и расчёт FOV -->
   <script src="controls.js"></script>
   <script src="fov.js"></script>
 
-  <!-- Main game loop, rendering, movement, chunk prefetch, regen logic -->
-  <script src="game.js"></script>
-
-  <!-- Monsters, combat systems -->
+  <!-- Спавн и поведение «монстров» -->
   <script src="monsters.js"></script>
-  <script src="combat/weapons.js"></script>
-  <script src="combat/enemyAI.js"></script>
-  <script src="combat/combatUI.js"></script>
+
+  <!-- Главный игровой цикл -->
+  <script src="game.js"></script>
 </body>
 </html>
