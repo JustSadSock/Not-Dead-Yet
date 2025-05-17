@@ -1,5 +1,6 @@
 // game.js
-import { GameMap } from './map/index.js';
+// game.js (верхняя строка)
+import { GameMap } from './map.js';
 
 const TILE_SIZE  = 32;
 const MOVE_SPEED = 3;
