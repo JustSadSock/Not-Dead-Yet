@@ -1,79 +1,87 @@
 // map.js
-// ES-модуль: только генерация, без ctx и без render
 
 /**
- * Проверяет, накладывается ли прямоугольник [x,y,w,h] на r
+ * Проверка, пересекаются ли два прямоугольника:
+ * — первый задан x,y,w,h
+ * — второй задан объектом {minX,maxX,minY,maxY}
  */
 function rectanglesOverlap(x, y, w, h, r) {
-  return !(r.minX > x + w - 1 || r.maxX < x ||
-           r.minY > y + h - 1 || r.maxY < y);
+  return !(
+    r.minX > x + w - 1 ||
+    r.maxX < x ||
+    r.minY > y + h - 1 ||
+    r.maxY < y
+  );
 }
 
 /**
- * Выбирает случайное целое из [min..max], с пикированием к середине.
+ * Случайное целое [min..max], но с пиковой вероятностью ближе к середине.
  */
 function weightedRandom(min, max) {
-  const r = Math.random(), w = Math.random();
-  const v = min + (max - min) * ((r + w) / 2);
+  const r = Math.random(), s = Math.random();
+  // (r+s)/2 даёт треугольное распределение
+  const v = min + (max - min) * ((r + s) / 2);
   return Math.floor(Math.max(min, Math.min(max, v)));
 }
 
 /**
- * Вырезает в массиве tiles (строка «hall») коридор из центра a в центр b.
+ * Прорезает в tiles (S×S) 2-клеточный коридор между центрами rectA и rectB
+ * rectA/B имеют {minX,maxX,minY,maxY}
  */
-function carveCorridor(tiles, a, b) {
-  let x = Math.floor((a.minX + a.maxX) / 2);
-  let y = Math.floor((a.minY + a.maxY) / 2);
-  const tx = Math.floor((b.minX + b.maxX) / 2);
-  const ty = Math.floor((b.minY + b.maxY) / 2);
+function carveCorridor(tiles, rectA, rectB) {
+  let x = Math.floor((rectA.minX + rectA.maxX) / 2);
+  let y = Math.floor((rectA.minY + rectA.maxY) / 2);
+  const tx = Math.floor((rectB.minX + rectB.maxX) / 2);
+  const ty = Math.floor((rectB.minY + rectB.maxY) / 2);
 
   // по X
   while (x !== tx) {
     tiles[y][x] = 'hall';
-    tiles[y + 1]?.[x] = 'hall';
+    if (y + 1 < tiles.length) tiles[y + 1][x] = 'hall';
     x += Math.sign(tx - x);
   }
   // по Y
   while (y !== ty) {
     tiles[y][x] = 'hall';
-    tiles[y]?.[x + 1] = 'hall';
+    if (x + 1 < tiles[y].length) tiles[y][x + 1] = 'hall';
     y += Math.sign(ty - y);
   }
 }
 
 /**
- * Генерирует список rooms + массив tiles размером S×S с 'wall' по умолчанию.
+ * Создаёт S×S сетку: в ней вырезаются
+ * — КОМНАТЫ прям-угол. формата от 4×4 до 8×8, не более 8 штук
+ * — МЕЖДУ ними коридоры «labyrinth-style»
  */
 function carveRoomsAndHalls(S) {
   const tiles = Array.from({ length: S }, () => Array(S).fill('wall'));
   const ROOM_MIN = 4, ROOM_MAX = 8;
-  const ROOM_COUNT = 3 + Math.floor(Math.random() * 6); // 3..8
+  const roomCount = 3 + Math.floor(Math.random() * 6); // 3..8
   const rooms = [];
 
-  for (let i = 0; i < ROOM_COUNT; i++) {
+  for (let i = 0; i < roomCount; i++) {
     const w = weightedRandom(ROOM_MIN, ROOM_MAX);
     const h = weightedRandom(ROOM_MIN, ROOM_MAX);
     const x = 1 + Math.floor(Math.random() * (S - w - 2));
     const y = 1 + Math.floor(Math.random() * (S - h - 2));
 
-    // проверяем буфер в 1 клетку вокруг
+    // проверка буфера вокруг
     if (rooms.some(r => rectanglesOverlap(x - 1, y - 1, w + 2, h + 2, r))) {
       i--;
       continue;
     }
-
     const room = { minX: x, minY: y, maxX: x + w - 1, maxY: y + h - 1 };
     rooms.push(room);
 
-    // заполняем room
-    for (let yy = y; yy < y + h; yy++) {
-      for (let xx = x; xx < x + w; xx++) {
+    // вырезаем комнату
+    for (let yy = y; yy <= room.maxY; yy++) {
+      for (let xx = x; xx <= room.maxX; xx++) {
         tiles[yy][xx] = 'room';
       }
     }
   }
 
-  // соединяем последовательно все комнаты коридорами
+  // свяжем их в цепочку лабиринтом
   for (let i = 1; i < rooms.length; i++) {
     carveCorridor(tiles, rooms[i - 1], rooms[i]);
   }
@@ -82,26 +90,28 @@ function carveRoomsAndHalls(S) {
 }
 
 /**
- * Ставит двери ('door') на стыке room↔hall, максимум по 2 на сторону.
+ * Вставляет двери ('door') по стыку room↔hall, максимум 2 на одну сторону.
  */
 function placeAndValidateDoors(tiles, rooms) {
   const doors = [];
-
   for (let room of rooms) {
     const candidates = [];
 
-    // верх/низ
+    // север/юг
     for (let x = room.minX; x <= room.maxX; x++) {
-      if (tiles[room.minY - 1]?.[x] === 'hall') candidates.push([x, room.minY]);
-      if (tiles[room.maxY + 1]?.[x] === 'hall') candidates.push([x, room.maxY]);
+      if (tiles[room.minY - 1] && tiles[room.minY - 1][x] === 'hall')
+        candidates.push([x, room.minY]);
+      if (tiles[room.maxY + 1] && tiles[room.maxY + 1][x] === 'hall')
+        candidates.push([x, room.maxY]);
     }
-    // лево/право
+    // запад/восток
     for (let y = room.minY; y <= room.maxY; y++) {
-      if (tiles[y][room.minX - 1] === 'hall') candidates.push([room.minX, y]);
-      if (tiles[y][room.maxX + 1] === 'hall') candidates.push([room.maxX, y]);
+      if (tiles[y][room.minX - 1] === 'hall')
+        candidates.push([room.minX, y]);
+      if (tiles[y][room.maxX + 1] === 'hall')
+        candidates.push([room.maxX, y]);
     }
 
-    // валидируем не более 2 дверей подряд
     const used = [];
     for (let [x, y] of candidates) {
       if (used.length >= 2) break;
@@ -114,17 +124,18 @@ function placeAndValidateDoors(tiles, rooms) {
       doors.push({ x, y, room });
     }
   }
-
-  console.log('placeAndValidateDoors →', doors);
+  console.log('Doors placed:', doors);
   return doors;
 }
 
 
-// собственно класс карты
-export class GameMap {
+/**
+ * Класс чанковой карты
+ */
+class GameMap {
   constructor() {
-    this.chunkSize = 32;
-    this.chunks = new Map();
+    this.chunkSize  = 32;
+    this.chunks     = new Map();
     this.generating = new Set();
   }
 
@@ -139,7 +150,7 @@ export class GameMap {
     const meta = Array.from({ length: this.chunkSize }, () =>
       Array.from({ length: this.chunkSize }, () => ({
         memoryAlpha: 0,
-        visited: false
+        visited:     false
       }))
     );
 
@@ -154,24 +165,24 @@ export class GameMap {
     if (!chunk) return false;
     const lx = gx - cx * this.chunkSize;
     const ly = gy - cy * this.chunkSize;
-    if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) {
-      return false;
-    }
+    if (
+      lx < 0 || ly < 0 ||
+      lx >= this.chunkSize || ly >= this.chunkSize
+    ) return false;
     const t = chunk.tiles[ly][lx];
     return t === 'room' || t === 'hall' || t === 'door';
   }
 
   regenerateChunksPreserveFOV(keys, computeFOV, player) {
     const vis = computeFOV(player.x, player.y, player.angle);
-
     for (let key of keys) {
       const [cx, cy] = key.split(',').map(Number);
       const oldC = this.chunks.get(key);
       if (!oldC) continue;
 
       const stash = [];
-      const baseX = cx * this.chunkSize;
-      const baseY = cy * this.chunkSize;
+      const baseX = cx * this.chunkSize,
+            baseY = cy * this.chunkSize;
 
       for (let y = 0; y < this.chunkSize; y++) {
         for (let x = 0; x < this.chunkSize; x++) {
@@ -179,7 +190,7 @@ export class GameMap {
           const coord = `${gx},${gy}`;
           const m = oldC.meta[y][x];
           if (vis.has(coord) || m.memoryAlpha > 0) {
-            stash.push({ x, y, tile: oldC.tiles[y][x], meta: { ...m } });
+            stash.push({ x,y, tile: oldC.tiles[y][x], meta: { ...m } });
           }
         }
       }
@@ -190,8 +201,11 @@ export class GameMap {
       const fresh = this.chunks.get(key);
       for (let s of stash) {
         fresh.tiles[s.y][s.x] = s.tile;
-        fresh.meta[s.y][s.x] = s.meta;
+        fresh.meta [s.y][s.x] = s.meta;
       }
     }
   }
 }
+
+// экспортим в global namespace
+window.GameMap = GameMap;
