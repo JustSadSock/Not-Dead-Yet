@@ -1,22 +1,21 @@
 <!DOCTYPE html>
-<html lang="ru">
-<head> … </head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Shifting Labyrinth Game</title>
+  <link rel="stylesheet" href="style.css">
+</head>
 <body>
   <canvas id="gameCanvas"></canvas>
-  <div id="joystick">…</div>
+  <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- карта и генерация -->
-  <script type="module" src="./map/index.js"></script>
-
-  <!-- движок -->
-  <script type="module" src="./game.js"></script>
-
-  <!-- остальное как было -->
-  <script src="./controls.js"></script>
-  <script src="./fov.js"></script>
-  <script src="./monsters.js"></script>
-  <script src="./combat/weapons.js"></script>
-  <script src="./combat/enemyAI.js"></script>
-  <script src="./combat/combatUI.js"></script>
+  <!-- сначала карта -->
+  <script src="map.js"></script>
+  <!-- потом управление -->
+  <script src="controls.js"></script>
+  <!-- потом главный цикл -->
+  <script src="game.js"></script>
 </body>
 </html>
