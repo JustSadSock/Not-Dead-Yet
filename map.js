@@ -19,7 +19,6 @@ function rectanglesOverlap(x, y, w, h, r) {
  */
 function weightedRandom(min, max) {
   const r = Math.random(), s = Math.random();
-  // (r+s)/2 даёт треугольное распределение
   const v = min + (max - min) * ((r + s) / 2);
   return Math.floor(Math.max(min, Math.min(max, v)));
 }
@@ -128,11 +127,10 @@ function placeAndValidateDoors(tiles, rooms) {
   return doors;
 }
 
-
 /**
  * Класс чанковой карты
  */
-class GameMap {
+export class GameMap {
   constructor() {
     this.chunkSize  = 32;
     this.chunks     = new Map();
@@ -163,8 +161,8 @@ class GameMap {
     const cy = Math.floor(gy / this.chunkSize);
     const chunk = this.chunks.get(`${cx},${cy}`);
     if (!chunk) return false;
-    const lx = gx - cx * this.chunkSize;
-    const ly = gy - cy * this.chunkSize;
+    const lx = gx - cx * this.chunkSize,
+          ly = gy - cy * this.chunkSize;
     if (
       lx < 0 || ly < 0 ||
       lx >= this.chunkSize || ly >= this.chunkSize
@@ -206,6 +204,3 @@ class GameMap {
     }
   }
 }
-
-// экспортим в global namespace
-window.GameMap = GameMap;
