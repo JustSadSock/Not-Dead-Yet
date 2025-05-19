@@ -1,5 +1,5 @@
 // map/validator/cleanup.js
-/**
+  import floodFillCheck from './validator/cleanup.js';
  * @param {string[][]} tiles
  * @param {Array<{cells:[number,number][]}>} rooms
  * @param {number} S
