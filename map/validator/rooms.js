@@ -1,74 +1,48 @@
-// map/rooms.js
-export function carveRoomsAndHalls(S) {
-  // 1) Начнём с чистого массива стен
-  const tiles = Array.from({length: S}, () => Array(S).fill('wall'));
+// map/validator/rooms.js
+import { randInt } from './utils.js';
 
-  // 2) Параметры комнат
-  const ROOM_MIN  = 4;
-  const ROOM_MAX  = 8;
-  const ROOM_COUNT = 3 + Math.floor(Math.random() * 6); // от 3 до 8
-
-  /** структура комнаты {minX,maxX,minY,maxY} */
+/**
+ * Находит места для N комнат, гарантируя отсутствие пересечений,
+ * вырезает в tiles пространство типа 'floorRoom'.
+ * Возвращает массив комнат вида { x, y, w, h, center:{x,y} }.
+ */
+export function carveRooms(tiles) {
   const rooms = [];
+  const MAX_ROOMS = 8;
+  const MIN_SIZE  = 4;
+  const MAX_SIZE  = 8;
+  const H = tiles.length, W = tiles[0].length;
 
-  for (let i = 0; i < ROOM_COUNT; i++) {
-    // случайные размеры с вероятностью получить средние чаще
-    const w = weightedRandom(ROOM_MIN, ROOM_MAX);
-    const h = weightedRandom(ROOM_MIN, ROOM_MAX);
-    const x = 1 + Math.floor(Math.random() * (S - w - 2));
-    const y = 1 + Math.floor(Math.random() * (S - h - 2));
+  for (let i = 0; i < MAX_ROOMS; i++) {
+    const w = randInt(MIN_SIZE, MAX_SIZE);
+    const h = randInt(MIN_SIZE, MAX_SIZE);
+    const x = randInt(1, W - w - 2);
+    const y = randInt(1, H - h - 2);
 
-    // проверим, не пересекается ли с существующими + оставляем рамку в 1
-    if (rooms.some(r => rectanglesOverlap(x-1, y-1, w+2, h+2, r))) {
-      i--; continue;
+    // проверяем пересечение с уже вырезанными
+    let ok = true;
+    for (let yy = y - 1; yy <= y + h; yy++) {
+      for (let xx = x - 1; xx <= x + w; xx++) {
+        if (tiles[yy][xx].type !== 'wall') {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) break;
     }
-    rooms.push({minX: x, minY: y, maxX: x + w - 1, maxY: y + h -1});
+    if (!ok) continue;
 
-    // вырезаем «пол» комнаты
+    // вырезаем пол для комнаты
     for (let yy = y; yy < y + h; yy++) {
       for (let xx = x; xx < x + w; xx++) {
-        tiles[yy][xx] = 'room';
+        tiles[yy][xx].type = 'floorRoom';
       }
     }
+    rooms.push({
+      x, y, w, h,
+      center: { x: x + Math.floor(w/2), y: y + Math.floor(h/2) }
+    });
   }
 
-  // 3) Соединяем комнаты коридорами (двухпиксельной толщины)
-  for (let i = 1; i < rooms.length; i++) {
-    const a = rooms[i-1], b = rooms[i];
-    carveCorridor(tiles, a, b);
-  }
-
-  return { tiles, rooms };
+  return rooms;
 }
-
-// вспомогательные
-function rectanglesOverlap(x,y,w,h, r) {
-  return !(r.minX > x+w || r.maxX < x || r.minY > y+h || r.maxY < y);
-}
-function weightedRandom(min,max) {
-  const mid = (min+max)/2;
-  const r = Math.random(), w = Math.random(); 
-  // сводим к нормальному распределению
-  const v = Math.floor(min + (max-min) * ((r + w)/2) );
-  return Math.min(max, Math.max(min, v|0));
-}
-function carveCorridor(tiles, a, b) {
-  // начальная точка — центр a
-  let x = Math.floor((a.minX + a.maxX)/2);
-  let y = Math.floor((a.minY + a.maxY)/2);
-  const tx = Math.floor((b.minX + b.maxX)/2);
-  const ty = Math.floor((b.minY + b.maxY)/2);
-
-  // сначала по X, потом по Y
-  while (x !== tx) {
-    tiles[y][x]     = 'hall';
-    tiles[y+1] && (tiles[y+1][x] = 'hall');
-    x += Math.sign(tx-x);
-  }
-  while (y !== ty) {
-    tiles[y][x]     = 'hall';
-    tiles[y][x+1] = 'hall';
-    y += Math.sign(ty-y);
-  }
-}
-export { carveRoomsAndHalls as findRooms };
