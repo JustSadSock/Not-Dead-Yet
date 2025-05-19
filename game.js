@@ -167,8 +167,11 @@ window.C_H     = C_H;
 // window.computeFOV — в fov.js, так что их трогать не нужно)
 // В конце game.js, перед requestAnimationFrame(loop)
 
-window.ctx     = ctx;
-window.gameMap = gameMap;
-window.player  = player;
+// expose globals для plain-скриптов (combatUI.js, monsters.js)
+window.ctx       = ctx;
+window.gameMap   = gameMap;
+window.player    = player;
 window.TILE_SIZE = TILE_SIZE;
+window.C_W       = C_W;
+window.C_H       = C_H;
 requestAnimationFrame(loop);
