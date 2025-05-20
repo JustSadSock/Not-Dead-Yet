@@ -1,23 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Shifting Labyrinth Game</title>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Not-Dead-Yet</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Canvas for game rendering -->
-  <canvas id="gameCanvas"></canvas>
+  <canvas id="gameCanvas" tabindex="0"></canvas>
+  <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- Touch Joystick control -->
-  <div id="joystick">
-    <div id="joystick-knob"></div>
-  </div>
+  <!-- 1) движок карты (импортирует generators/communal.js) -->
+  <script type="module" src="./map.js"></script>
 
-  <!-- Game and control scripts -->
-  <script src="map.js"></script>
-  <script src="controls.js"></script>
-  <script src="game.js"></script>
-</вbody>
+  <!-- 2) общий игровой цикл (импортирует GameMap из map.js) -->
+  <script type="module" src="./game.js"></script>
+
+  <!-- 3) контролы остаются plain-скриптом -->
+  <script src="./controls.js"></script>
+</body>
 </html>
