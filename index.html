@@ -1,21 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Shifting Labyrinth Game</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Canvas for game rendering -->
   <canvas id="gameCanvas"></canvas>
-  <div id="joystick"><div id="joystick-knob"></div></div>
 
-  <!-- сначала карта -->
+  <!-- Touch Joystick control -->
+  <div id="joystick">
+    <div id="joystick-knob"></div>
+  </div>
+
+  <!-- Game and control scripts -->
   <script src="map.js"></script>
-  <!-- потом управление -->
   <script src="controls.js"></script>
-  <!-- потом главный цикл -->
   <script src="game.js"></script>
-</body>
+</вbody>
 </html>
