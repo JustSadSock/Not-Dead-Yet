@@ -1,175 +1,120 @@
 // game.js
-//
-// Полностью рабочий цикл + фикс:
-//   • player.angle alias (для перегенерации)
-//   • FOV всегда включает клетку под игроком
-//   • “стена-блокер” помечается видимой → стены рисуются
-//   • регенерация выполняется КАЖДЫЕ 1 c для всех чанков
-//   • консоль-лог показывает, какие чанки регенерированы
-//   • управление: клавиши + вирту-джойстик (controls.js -> joyDX/joyDY)
 
 import { GameMap } from './map.js';
 
-/* ───── Константы ───── */
-const TILE        = 32;
-const SPEED       = 3;            // тайл/сек
-const FOV_ANGLE   = Math.PI / 3;  // 60°
-const FOV_HALF    = FOV_ANGLE / 2;
-const FOV_DIST    = 6;            // тайлов
-const FADE_RATE   = 1 / 4;        // память → 0 за 4 c
-const REGEN_TIME  = 1.0;          // сек
+const TILE_SIZE = 16;     // размер клетки в пикселях
+const CANVAS_WIDTH = 640;
+const CANVAS_HEIGHT = 480;
 
-/* ───── Canvas ───── */
-const cv  = document.getElementById('gameCanvas');
-const ctx = cv.getContext('2d');
-let CW, CH;
-function fit() { CW = cv.width = innerWidth; CH = cv.height = innerHeight; }
-addEventListener('resize', fit); fit();
+class Game {
+    constructor() {
+        // Инициализируем canvas
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = CANVAS_WIDTH;
+        this.canvas.height = CANVAS_HEIGHT;
+        document.body.appendChild(this.canvas);
+        this.ctx = this.canvas.getContext('2d');
 
-/* ───── Карта и спавн ───── */
-const map = new GameMap(32);
-map.ensureChunk(0, 0);
+        this.map = new GameMap();
+        this.player = { x: 0, y: 0 };  // начальная позиция игрока
 
-let spawnX = 16, spawnY = 16;
-outer: for (let y = 0; y < 32; y++)
-  for (let x = 0; x < 32; x++)
-    if (map.chunks.get('0,0').tiles[y][x] === 'room') { spawnX = x + .5; spawnY = y + .5; break outer; }
+        this.bindKeys();
+        window.addEventListener("gamepadconnected", (e) => {
+            console.log("Gamepad connected:", e.gamepad);
+        });
 
-const player = { x: spawnX, y: spawnY, ang: 0, angle: 0 };   // alias angle
+        // Запускаем главный цикл
+        this.loop = this.loop.bind(this);
+        requestAnimationFrame(this.loop);
+    }
 
-/* ───── Ввод ───── */
-const keys = {};
-addEventListener('keydown', e => keys[e.key] = true);
-addEventListener('keyup',   e => keys[e.key] = false);
+    bindKeys() {
+        window.addEventListener('keydown', (e) => {
+            let dx = 0, dy = 0;
+            if (e.key === 'ArrowUp' || e.key === 'w')    dy = -1;
+            if (e.key === 'ArrowDown' || e.key === 's')  dy =  1;
+            if (e.key === 'ArrowLeft' || e.key === 'a')  dx = -1;
+            if (e.key === 'ArrowRight' || e.key === 'd') dx =  1;
+            if (dx !== 0 || dy !== 0) {
+                const newX = this.player.x + dx;
+                const newY = this.player.y + dy;
+                // Проверяем столкновение со стеной
+                if (this.map.getTile(newX, newY) !== 2) {
+                    this.player.x = newX;
+                    this.player.y = newY;
+                }
+            }
+        });
+    }
 
-/* значения задаёт controls.js */
-window.joyDX = 0;
-window.joyDY = 0;
-
-/* ───── Bresenham ───── */
-function line(x0,y0,x1,y1){
-  const out=[], dx=Math.abs(x1-x0), dy=Math.abs(y1-y0),
-        sx=x0<x1?1:-1, sy=y0<y1?1:-1;
-  let err = dx - dy, x = x0, y = y0;
-  while (true) {
-    out.push([x, y]);
-    if (x === x1 && y === y1) break;
-    const e2 = err * 2;
-    if (e2 > -dy) { err -= dy; x += sx; }
-    if (e2 <  dx) { err += dx; y += sy; }
-  }
-  return out;
-}
-
-/* ───── FOV ───── */
-function FOV(px,py,ang){
-  const vis = new Set();
-  const c = Math.cos(ang), s = Math.sin(ang);
-  const x0 = Math.floor(px), y0 = Math.floor(py);
-
-  vis.add(`${x0},${y0}`);              // клетка под игроком
-
-  for (let dy = -FOV_DIST; dy <= FOV_DIST; dy++)
-    for (let dx = -FOV_DIST; dx <= FOV_DIST; dx++) {
-      const gx = x0 + dx, gy = y0 + dy,
-            vx = gx + .5 - px, vy = gy + .5 - py,
-            d  = Math.hypot(vx, vy);
-      if (d > FOV_DIST + .5) continue;
-      if ((vx*c + vy*s) / d < Math.cos(FOV_HALF)) continue;
-
-      let blocked = false;
-      const ray = line(x0, y0, gx, gy).slice(1);   // без стартовой
-      for (const [lx, ly] of ray) {
-        if (!map.isFloor(lx, ly)) {                // наткнулись на стену
-          vis.add(`${lx},${ly}`);                  // сама стена видима
-          blocked = true;
-          break;
+    handleGamepad() {
+        const gamepads = navigator.getGamepads();
+        if (!gamepads) return;
+        const gp = gamepads[0];
+        if (gp) {
+            const ax = gp.axes[0], ay = gp.axes[1];
+            if (ax < -0.5) this.tryMove(-1, 0);
+            if (ax >  0.5) this.tryMove(1, 0);
+            if (ay < -0.5) this.tryMove(0, -1);
+            if (ay >  0.5) this.tryMove(0, 1);
         }
-      }
-      if (!blocked) vis.add(`${gx},${gy}`);        // свободный тайл
     }
-  return vis;
+    tryMove(dx, dy) {
+        const newX = this.player.x + dx;
+        const newY = this.player.y + dy;
+        if (this.map.getTile(newX, newY) !== 2) {
+            this.player.x = newX;
+            this.player.y = newY;
+        }
+    }
+
+    loop() {
+        this.handleGamepad();
+        // Обновляем поле зрения и удаляем дальние чанки
+        this.map.computeFOV(this.player.x, this.player.y);
+        this.map.cleanup(this.player.x, this.player.y);
+        this.draw();
+        requestAnimationFrame(this.loop);
+    }
+
+    draw() {
+        // Очищаем экран
+        this.ctx.fillStyle = 'black';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Вычисляем видимую область вокруг игрока
+        const halfW = Math.floor(this.canvas.width / 2 / TILE_SIZE);
+        const halfH = Math.floor(this.canvas.height / 2 / TILE_SIZE);
+        const startX = this.player.x - halfW;
+        const startY = this.player.y - halfH;
+        const cols = Math.ceil(this.canvas.width / TILE_SIZE);
+        const rows = Math.ceil(this.canvas.height / TILE_SIZE);
+
+        for (let ix = 0; ix <= cols; ix++) {
+            for (let iy = 0; iy <= rows; iy++) {
+                const wx = startX + ix;
+                const wy = startY + iy;
+                const tile = this.map.getTile(wx, wy);
+                let color = 'black';
+                const key = `${wx},${wy}`;
+                const isVisible = this.map.visible.has(key);
+                const isSeen    = this.map.seen.has(key);
+
+                if (tile === 1) {  // пол
+                    if (isVisible) color = '#b8b8b8';   // светлый (видимый)
+                    else if (isSeen) color = '#808080'; // тёмный (когда-то виденный)
+                } else if (tile === 2) {  // стена
+                    if (isVisible) color = '#444444';   // видимая стена
+                    else if (isSeen) color = '#222222';  // память о стене
+                }
+                this.ctx.fillStyle = color;
+                this.ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+        }
+        // Рисуем игрока красным квадратом в центре экрана
+        this.ctx.fillStyle = 'red';
+        this.ctx.fillRect(halfW * TILE_SIZE, halfH * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
 }
 
-/* ───── Главный цикл ───── */
-let prev = performance.now(), regen = 0;
-function loop(now = performance.now()) {
-  const dt = (now - prev) / 1000; prev = now; regen += dt;
-
-  /* движение */
-  const inDX = (+!!keys.d - +!!keys.a) + window.joyDX;
-  const inDY = (+!!keys.s - +!!keys.w) + window.joyDY;
-  if (inDX || inDY) {
-    const len = Math.hypot(inDX, inDY);
-    const dx = inDX * SPEED * dt / len;
-    const dy = inDY * SPEED * dt / len;
-    const nx = player.x + dx, ny = player.y + dy;
-    if (map.isFloor(Math.floor(nx), Math.floor(player.y))) player.x = nx;
-    if (map.isFloor(Math.floor(player.x), Math.floor(ny))) player.y = ny;
-    player.ang   = Math.atan2(dy, dx);
-    player.angle = player.ang;          // alias
-  }
-
-  /* ensureChunk 3×3 вокруг игрока */
-  const pcx = Math.floor(player.x / 32), pcy = Math.floor(player.y / 32);
-  for (let cy = pcy - 1; cy <= pcy + 1; cy++)
-    for (let cx = pcx - 1; cx <= pcx + 1; cx++)
-      map.ensureChunk(cx, cy);
-
-  /* регенерация: каждые 1 с — ВСЕ чанки */
-  if (regen >= REGEN_TIME) {
-    regen = 0;
-    const keys = Array.from(map.chunks.keys());
-    console.log('regen', keys.join('; '));
-    map.regenerateChunksPreserveFOV(keys, FOV, player);
-  }
-
-  /* fade памяти */
-  for (const ch of map.chunks.values())
-    for (const row of ch.meta)
-      for (const m of row)
-        if (m.memoryAlpha > 0)
-          m.memoryAlpha = Math.max(0, m.memoryAlpha - dt * FADE_RATE);
-
-  /* ——— рендер ——— */
-  ctx.clearRect(0, 0, CW, CH);
-  ctx.save();
-  ctx.translate(CW/2 - player.x*TILE, CH/2 - player.y*TILE);
-
-  const vis = FOV(player.x, player.y, player.ang);
-
-  for (const [key, ch] of map.chunks) {
-    const [cx, cy] = key.split(',').map(Number),
-          ox = cx * 32, oy = cy * 32;
-
-    for (let y = 0; y < 32; y++) {
-      for (let x = 0; x < 32; x++) {
-        const t  = ch.tiles[y][x],
-              gx = ox + x, gy = oy + y,
-              id = `${gx},${gy}`;
-
-        let a = ch.meta[y][x].memoryAlpha;
-        if (vis.has(id)) { a = 1; ch.meta[y][x].memoryAlpha = 1; }
-        if (a <= 0) continue;
-
-        ctx.globalAlpha = a;
-        ctx.fillStyle = t === 'room' ? '#88b4ff'
-                     : t === 'hall' ? '#6c9eff'
-                     : t === 'door' ? '#ffa500'
-                     :                '#666';
-        ctx.fillRect(gx*TILE, gy*TILE, TILE, TILE);
-      }
-    }
-  }
-
-  /* игрок */
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = '#f00';
-  ctx.beginPath();
-  ctx.arc(player.x*TILE, player.y*TILE, TILE*0.4, 0, Math.PI*2);
-  ctx.fill();
-
-  ctx.restore();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
+window.onload = () => new Game();
