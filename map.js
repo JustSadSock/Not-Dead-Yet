@@ -8,7 +8,7 @@
 //    как в проверенной рабочей версии.
 
 import { generateTiles } from './generators/communal.js';
-import { chunkIsValid }  from './validator.js';
+import { chunkIsValid }  from './generators/validator.js';
 
 export class GameMap {
   constructor(chunkSize = 32) {
