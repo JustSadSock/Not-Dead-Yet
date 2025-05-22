@@ -127,3 +127,4 @@ class Game {
 }
 
 window.onload = () => new Game();
+window.game = this;
