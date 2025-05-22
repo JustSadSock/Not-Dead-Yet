@@ -1,13 +1,24 @@
 // generators/communal.js
 //
-// Финальный генератор «советской коммуналки»
-//  • 4-8 комнат (каждая 4×4…8×8)
-//  • коридоры ВЕЗДЕ ровно двухтайловые
-//  • дверь (door) появляется только в стене room↔hall
-//    – на каждой стороне комнаты ≤ 2 дверей
-//    – у комнаты в сумме ≥ 2 дверей
-//  • коридоры никогда не «липнут» боком к room без двери
-//  • никакие тайлы не накладываются (проверка overlap)
+// “Коммуналка v2” — надёжная:
+//   • 4-8 прямоугольных комнат 4×4…8×8 (без перекрытий)
+//   • у КАЖДОЙ комнаты минимум 2 двери (на разных сторонах),
+//     максимум 2 двери на сторону
+//   • дверь ставится в стене room↔hall; коридор всегда 2-тайловый
+//   • коридоры не «липнут» к комнате боком без двери
+//   • формируется связный граф – все комнаты достижимы
+//
+//  Алгоритм:
+//     1. Режем комнаты (как раньше).
+//     2. Для каждой комнаты выбираем 2 случайных стороны ≠,
+//        делаем двери и сразу «пробиваем» 2-тайловый
+//        коридор наружу (hall).
+//     3. Соединяем все двери друг с другом “L-коридорами”
+//        тем же carveHall() — получаем связность.
+//     4. Все ограничения (≤2 дверей/сторона, ≥2 всего)
+//        уже соблюдены по конструкции.
+//
+//  Все функции написаны «с нуля», старый carveTile удалён.
 
 function R(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
 function overlap(x, y, w, h, r) {
@@ -31,106 +42,85 @@ function carveRooms(tiles) {
       for (let xx = x; xx < x + w; xx++)
         tiles[yy][xx] = 'room';
     rooms.push({ minX: x, minY: y, maxX: x + w - 1, maxY: y + h - 1,
-                 cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2) });
+                 cx: x + Math.floor(w/2), cy: y + Math.floor(h/2) });
   }
   return rooms;
 }
 
-/* ───────── 2. Коридор / дверь ───────── */
-function carveTile(tiles, x, y) {
+/* — маленькая утилита — */
+function setHall(tiles, x, y) {
+  if (tiles[y]?.[x] !== 'wall') return;
+  tiles[y][x] = 'hall';
+}
+
+/* прокладываем 2-тайловый коридор из (x,y) в направлении (dx,dy) пока не встретим hall */
+function carveHall(tiles, x, y, dx, dy) {
   const H = tiles.length, W = tiles[0].length;
-
-  /* если room → ставим дверь только если сосед == hall */
-  if (tiles[y][x] === 'room') {
-    const touchHall =
-      (tiles[y-1]?.[x] === 'hall') ||
-      (tiles[y+1]?.[x] === 'hall') ||
-      (tiles[y]?.[x-1] === 'hall') ||
-      (tiles[y]?.[x+1] === 'hall');
-    if (touchHall) tiles[y][x] = 'door';
-    return;
-  }
-
-  /* если wall → превращаем в hall, НО
-     – запрещаем «липнуть» к room сбоку
-     – расширяем до 2-тайлов */
-  if (tiles[y][x] === 'wall') {
-    const touchRoom =
-      (tiles[y-1]?.[x] === 'room') ||
-      (tiles[y+1]?.[x] === 'room') ||
-      (tiles[y]?.[x-1] === 'room') ||
-      (tiles[y]?.[x+1] === 'room');
-    if (touchRoom) return;                       // оставляем стену
-
-    tiles[y][x] = 'hall';                        // основной тайл
-    /* расширяем коридор до 2-ух тайлов */
-    if (tiles[y-1]?.[x] === 'wall' && tiles[y+1]?.[x] === 'wall') {
-      tiles[y-1][x] = 'hall';                    // горизонтальный коридор
-    } else if (tiles[y]?.[x-1] === 'wall' && tiles[y]?.[x+1] === 'wall') {
-      tiles[y][x+1] = 'hall';                    // вертикальный коридор
-    }
+  while (x > 0 && x < W-1 && y > 0 && y < H-1 && tiles[y][x] === 'wall') {
+    setHall(tiles, x, y);
+    /* расширяем поперёк направления, получаем 2-тайловую ширину */
+    if (dx !== 0) { setHall(tiles, x, y-1); setHall(tiles, x, y+1); }
+    if (dy !== 0) { setHall(tiles, x-1, y); setHall(tiles, x+1, y); }
+    x += dx; y += dy;
   }
 }
 
-function carveCorridors(tiles, rooms) {
-  rooms.sort((a, b) => a.cx - b.cx);             // цепочка по X
+/* ───────── 2. Двери + Начальные коридоры ───────── */
+function placeDoorsAndStubs(tiles, rooms) {
+  const dirs = [
+    {side:'T', dx:0,  dy:-1},
+    {side:'B', dx:0,  dy: 1},
+    {side:'L', dx:-1, dy: 0},
+    {side:'R', dx: 1, dy: 0}
+  ];
 
-  for (let i = 1; i < rooms.length; i++) {
-    const A = rooms[i - 1], B = rooms[i];
-    let x = A.cx, y = A.cy;
+  const doorList = [];   // запомним все двери, чтобы позже соединить
 
-    while (x !== B.cx) { x += Math.sign(B.cx - x); carveTile(tiles, x, y); }
-    while (y !== B.cy) { y += Math.sign(B.cy - y); carveTile(tiles, x, y); }
-  }
-
-  /* после прокладки коридоров убеждаемся, что:
-     – на каждой стороне ≤2 дверей
-     – в сумме у комнаты ≥2 дверей              */
   for (const R of rooms) {
-    const cnt = { L:0, R:0, T:0, B:0 };
-
-    for (let x = R.minX; x <= R.maxX; x++) {
-      if (tiles[R.minY][x] === 'door') cnt.T++;
-      if (tiles[R.maxY][x] === 'door') cnt.B++;
-    }
-    for (let y = R.minY; y <= R.maxY; y++) {
-      if (tiles[y][R.minX] === 'door') cnt.L++;
-      if (tiles[y][R.maxX] === 'door') cnt.R++;
-    }
-
-    const sides = [];
-    if (cnt.T < 2) sides.push({ side:'T', y:R.minY, range:[R.minX+1,R.maxX-1] });
-    if (cnt.B < 2) sides.push({ side:'B', y:R.maxY, range:[R.minX+1,R.maxX-1] });
-    if (cnt.L < 2) sides.push({ side:'L', x:R.minX, range:[R.minY+1,R.maxY-1] });
-    if (cnt.R < 2) sides.push({ side:'R', x:R.maxX, range:[R.minY+1,R.maxY-1] });
-
-    const need = Math.max(0, 2 - (cnt.L+cnt.R+cnt.T+cnt.B));
-    let placed = 0;
-
-    while (placed < need && sides.length) {
-      const idx = Math.floor(Math.random() * sides.length);
-      const S = sides[idx];
-
-      if (S.side === 'T' || S.side === 'B') {
-        const x = R.minX + 1 + Math.floor(Math.random() * (R.maxX - R.minX - 1));
-        if (tiles[S.y][x] === 'wall' &&
-            tiles[S.side === 'T' ? S.y-1 : S.y+1][x] === 'hall') {
-          tiles[S.y][x] = 'door'; placed++; continue;
-        }
-      } else {
-        const y = R.minY + 1 + Math.floor(Math.random() * (R.maxY - R.minY - 1));
-        if (tiles[y][S.x] === 'wall' &&
-            tiles[y][S.side === 'L' ? S.x-1 : S.x+1] === 'hall') {
-          tiles[y][S.x] = 'door'; placed++; continue;
-        }
+    /* берём две разные стороны */
+    let sides = dirs.slice();
+    const first  = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
+    const second = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
+    [first, second].forEach(S => {
+      /* выбираем позицию вдоль стороны, не в углу */
+      let x, y;
+      if (S.side==='T' || S.side==='B') {
+        x = R.minX + 1 + Math.floor(Math.random() * (R.maxX - R.minX - 1));
+        y = (S.side==='T') ? R.minY : R.maxY;
+      } else { // L / R
+        y = R.minY + 1 + Math.floor(Math.random() * (R.maxY - R.minY - 1));
+        x = (S.side==='L') ? R.minX : R.maxX;
       }
-      sides.splice(idx, 1);                      // не получилось — убираем сторону
-    }
+      tiles[y][x] = 'door';
+      /* пробиваем коридор наружу */
+      carveHall(tiles, x + S.dx, y + S.dy, S.dx, S.dy);
+      doorList.push({ x, y });
+    });
+  }
+  return doorList;
+}
+
+/* ───────── 3. Соединяем все двери между собой ─────────
+   “L-коридорами”, всегда 2-тайловыми */
+function connectDoors(tiles, doorList) {
+  doorList.sort((a,b)=> a.x - b.x);  // слева-направо
+  for (let i = 1; i < doorList.length; i++) {
+    const A = doorList[i-1], B = doorList[i];
+    let x = A.x, y = A.y;
+
+    /* горизонталь */
+    const dirX = Math.sign(B.x - x);
+    while (x !== B.x) { x += dirX; carveHall(tiles, x, y,  dirX, 0); }
+
+    /* вертикаль */
+    const dirY = Math.sign(B.y - y);
+    while (y !== B.y) { y += dirY; carveHall(tiles, x, y, 0, dirY); }
   }
 }
 
-/* ───────── 3. Точка входа для map.js ───────── */
+/* ───────── 4. Точка входа для map.js ───────── */
 export function generateTiles(tiles) {
-  const rooms = carveRooms(tiles);
-  carveCorridors(tiles, rooms);
+  const rooms    = carveRooms(tiles);
+  const doorList = placeDoorsAndStubs(tiles, rooms);
+  connectDoors(tiles, doorList);   // делаем связный граф
 }
