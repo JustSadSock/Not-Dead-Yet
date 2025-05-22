@@ -93,4 +93,5 @@ export class GameMap {
 }
 
 /* legacy global (если где-то нужно) */
+export { applyRules as chunkIsValid };
 window.GameMap = GameMap;
