@@ -99,3 +99,4 @@ export function applyRules(rawTiles) {
 
   return tiles;
 }
+export { applyRules as chunkIsValid };
