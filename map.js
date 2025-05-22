@@ -1,97 +1,100 @@
 // map.js
-//
-// Чанковый движок карты + память + «автопроверка чанка».
-//  ✓ ensureChunk генерирует чанк, вызывая generators/communal.js
-//  ✓ после генерации вызывает chunkIsValid() из validator.js
-//    и, если правила нарушены, пере-генерирует до 10 раз.
-//  ✓ остальная логика (isFloor, regenerateChunksPreserveFOV) —
-//    как в проверенной рабочей версии.
 
-import { generateTiles } from './generators/communal.js';
-import { chunkIsValid }  from './generators/validator.js';
+import { generateChunk } from './generators/communal.js';
+
+const CHUNK_SIZE = 50;
 
 export class GameMap {
-  constructor(chunkSize = 32) {
-    this.chunkSize  = chunkSize;
-    this.chunks     = new Map();          // key="cx,cy" → {tiles,meta}
-    this.generating = new Set();          // защита от двойного вызова
-  }
-
-  /* ───────── ensureChunk ───────── */
-  ensureChunk(cx, cy) {
-    const key = `${cx},${cy}`;
-    if (this.chunks.has(key) || this.generating.has(key)) return;
-    this.generating.add(key);
-
-    const S = this.chunkSize;
-    const tiles = Array.from({ length: S }, () => Array(S).fill('wall'));
-
-    /* — генерация с автопроверкой — */
-    let tries = 0;
-    do {
-      /* обнуляем tiles до wall перед каждой попыткой */
-      for (let y = 0; y < S; y++) tiles[y].fill('wall');
-      generateTiles(tiles);               // генерируем «коммуналку»
-      tries++;
-    } while (!chunkIsValid(tiles) && tries < 10);
-
-    /* meta-слой fade memory */
-    const meta = Array.from({ length: S }, () =>
-      Array.from({ length: S }, () => ({ memoryAlpha: 0 }))
-    );
-
-    this.chunks.set(key, { tiles, meta });
-    this.generating.delete(key);
-  }
-
-  /* ───────── isFloor ───────── */
-  isFloor(gx, gy) {
-    const cx = Math.floor(gx / this.chunkSize),
-          cy = Math.floor(gy / this.chunkSize),
-          chunk = this.chunks.get(`${cx},${cy}`);
-    if (!chunk) return false;
-    const lx = gx - cx * this.chunkSize,
-          ly = gy - cy * this.chunkSize;
-    const t = chunk.tiles[ly][lx];
-    return (t === 'room' || t === 'hall' || t === 'door');
-  }
-
-  /* ───────── перегенерация с сохранением FOV ───────── */
-  regenerateChunksPreserveFOV(keys, computeFOV, player) {
-    const vis = computeFOV(player.x, player.y, player.angle);
-
-    for (const key of keys) {
-      const [cx, cy] = key.split(',').map(Number);
-      const oldC = this.chunks.get(key);
-      if (!oldC) continue;
-
-      /* stash видимых + fade>0 тайлов */
-      const stash = [];
-      const baseX = cx * this.chunkSize, baseY = cy * this.chunkSize;
-      for (let y = 0; y < this.chunkSize; y++) {
-        for (let x = 0; x < this.chunkSize; x++) {
-          const coord = `${baseX + x},${baseY + y}`;
-          const m = oldC.meta[y][x];
-          if (vis.has(coord) || m.memoryAlpha > 0) {
-            stash.push({ x, y, t: oldC.tiles[y][x], m: { ...m } });
-          }
-        }
-      }
-
-      /* генерируем заново (с проверкой) */
-      this.chunks.delete(key);
-      this.ensureChunk(cx, cy);
-
-      /* возвращаем сохранённые клетки */
-      const fresh = this.chunks.get(key);
-      for (const s of stash) {
-        fresh.tiles[s.y][s.x] = s.t;
-        fresh.meta [s.y][s.x] = s.m;
-      }
+    constructor() {
+        this.chunks = new Map();      // словарь чанков: ключ "cx,cy" -> 2D-массив тайлов
+        this.visible = new Set();     // множество видимых клеток "x,y" (сейчас в поле зрения)
+        this.seen = new Set();        // множество когда-либо виденных клеток "x,y"
     }
-  }
+    _chunkKey(cx, cy) {
+        return `${cx},${cy}`;
+    }
+    getChunk(cx, cy) {
+        // Возвращает чанк по координатам (сгенерировав его, если нужно)
+        const key = this._chunkKey(cx, cy);
+        if (!this.chunks.has(key)) {
+            this.chunks.set(key, generateChunk(cx, cy));
+        }
+        return this.chunks.get(key);
+    }
+    getTile(x, y) {
+        // Глобальные координаты -> локальные в чанке
+        const cx = Math.floor(x / CHUNK_SIZE);
+        const cy = Math.floor(y / CHUNK_SIZE);
+        const chunk = this.getChunk(cx, cy);
+        const localX = x - cx * CHUNK_SIZE;
+        const localY = y - cy * CHUNK_SIZE;
+        // Если вышли за пределы (маловероятно), считаем стеной
+        if (localX < 0 || localX >= CHUNK_SIZE || localY < 0 || localY >= CHUNK_SIZE) {
+            return 2;
+        }
+        return chunk[localY][localX];
+    }
+    // Алгоритм Брезенхэма для получения промежуточных точек между (x0,y0) и (x1,y1).
+    line(x0, y0, x1, y1) {
+        const points = [];
+        let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+        let sx = (x0 < x1) ? 1 : -1;
+        let sy = (y0 < y1) ? 1 : -1;
+        let err = dx - dy;
+        let x = x0, y = y0;
+        while (true) {
+            points.push([x, y]);
+            if (x === x1 && y === y1) break;
+            let e2 = err * 2;
+            if (e2 > -dy) { err -= dy; x += sx; }
+            if (e2 < dx) { err += dx; y += sy; }
+        }
+        return points;
+    }
+    computeFOV(px, py, radius = 10) {
+        // Пересчитываем поле зрения (сброс видимых)
+        this.visible.clear();
+        for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                if (dx*dx + dy*dy > radius*radius) continue;
+                const tx = px + dx, ty = py + dy;
+                const linePoints = this.line(px, py, tx, ty);
+                let blocked = false;
+                for (let i = 1; i < linePoints.length; i++) {
+                    const [lx, ly] = linePoints[i];
+                    const [plx, ply] = linePoints[i-1];
+                    // Проверка диагонального заслона: если оба смежных тайла по горизонтали и вертикали - стены
+                    if (lx !== plx && ly !== ply) {
+                        if (this.getTile(plx + (lx - plx), ply) === 2 &&
+                            this.getTile(plx, ply + (ly - ply)) === 2) {
+                            blocked = true;
+                        }
+                    }
+                    const tile = this.getTile(lx, ly);
+                    if (tile === 2) {
+                        blocked = true;
+                    }
+                    if (blocked) break;
+                    this.visible.add(`${lx},${ly}`);
+                    this.seen.add(`${lx},${ly}`);
+                }
+                if (!blocked) {
+                    // сам игрок всегда видит свою клетку
+                    this.visible.add(`${px},${py}`);
+                    this.seen.add(`${px},${py}`);
+                }
+            }
+        }
+    }
+    cleanup(px, py, range = 2) {
+        // Удаляем чанки, удалённые дальше, чем range чанков
+        const pcx = Math.floor(px / CHUNK_SIZE);
+        const pcy = Math.floor(py / CHUNK_SIZE);
+        for (const key of Array.from(this.chunks.keys())) {
+            const [cx, cy] = key.split(',').map(Number);
+            if (Math.abs(cx - pcx) > range || Math.abs(cy - pcy) > range) {
+                this.chunks.delete(key);
+            }
+        }
+    }
 }
-
-/* legacy global (если где-то нужно) */
-
-window.GameMap = GameMap;
