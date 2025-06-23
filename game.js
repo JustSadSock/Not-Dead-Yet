@@ -171,7 +171,12 @@ function render() {
       const α    = cell.memoryAlpha;
       if (α <= 0) continue;
       ctx.globalAlpha = α;
-      ctx.fillStyle   = ch.tiles[ly][lx] ? "#888" : "#444";
+      const type = ch.tiles[ly][lx];
+      let color = "#444";
+      if (type === 1) color = "#777";       // corridor
+      if (type === 2) color = "#66aaff";   // room
+      if (type === 3) color = "#ff8800";   // door
+      ctx.fillStyle = type === 0 ? "#444" : color;
       ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
     }
   }
