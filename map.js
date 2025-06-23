@@ -5,34 +5,53 @@ import { generateChunk } from './generators/communal.js';
 const CHUNK_SIZE = 50;
 
 export class GameMap {
-    constructor() {
-        this.chunks = new Map();      // словарь чанков: ключ "cx,cy" -> 2D-массив тайлов
-        this.visible = new Set();     // множество видимых клеток "x,y" (сейчас в поле зрения)
-        this.seen = new Set();        // множество когда-либо виденных клеток "x,y"
+    constructor(chunkSize = CHUNK_SIZE) {
+        this.chunkSize  = chunkSize;
+        this.chunks     = new Map();      // key "cx,cy" -> {tiles, meta}
+        this.generating = new Set();      // защита от двойного вызова
+        this.visible = new Set();         // клетки в текущем поле зрения
+        this.seen    = new Set();         // клетки, которые когда-либо видели
     }
+
     _chunkKey(cx, cy) {
         return `${cx},${cy}`;
     }
-    getChunk(cx, cy) {
-        // Возвращает чанк по координатам (сгенерировав его, если нужно)
+
+    ensureChunk(cx, cy) {
         const key = this._chunkKey(cx, cy);
-        if (!this.chunks.has(key)) {
-            this.chunks.set(key, generateChunk(cx, cy));
-        }
+        if (this.chunks.has(key) || this.generating.has(key)) return;
+        this.generating.add(key);
+
+        const tiles = generateChunk(cx, cy);
+        const S = this.chunkSize;
+        const meta = Array.from({ length: S }, () =>
+            Array.from({ length: S }, () => ({ memoryAlpha: 0 }))
+        );
+
+        this.chunks.set(key, { tiles, meta });
+        this.generating.delete(key);
+    }
+
+    getChunk(cx, cy) {
+        const key = this._chunkKey(cx, cy);
+        if (!this.chunks.has(key)) this.ensureChunk(cx, cy);
         return this.chunks.get(key);
     }
+
     getTile(x, y) {
-        // Глобальные координаты -> локальные в чанке
-        const cx = Math.floor(x / CHUNK_SIZE);
-        const cy = Math.floor(y / CHUNK_SIZE);
+        const cx = Math.floor(x / this.chunkSize);
+        const cy = Math.floor(y / this.chunkSize);
         const chunk = this.getChunk(cx, cy);
-        const localX = x - cx * CHUNK_SIZE;
-        const localY = y - cy * CHUNK_SIZE;
-        // Если вышли за пределы (маловероятно), считаем стеной
-        if (localX < 0 || localX >= CHUNK_SIZE || localY < 0 || localY >= CHUNK_SIZE) {
+        const localX = x - cx * this.chunkSize;
+        const localY = y - cy * this.chunkSize;
+        if (localX < 0 || localX >= this.chunkSize || localY < 0 || localY >= this.chunkSize) {
             return 2;
         }
-        return chunk[localY][localX];
+        return chunk.tiles[localY][localX];
+    }
+
+    isFloor(x, y) {
+        return this.getTile(x, y) === 1;
     }
     // Алгоритм Брезенхэма для получения промежуточных точек между (x0,y0) и (x1,y1).
     line(x0, y0, x1, y1) {
@@ -97,4 +116,36 @@ export class GameMap {
             }
         }
     }
+
+    regenerateChunksPreserveFOV(keys, computeFOV, player) {
+        const vis = computeFOV(player.x, player.y);
+
+        for (const key of keys) {
+            const [cx, cy] = key.split(',').map(Number);
+            const oldC = this.chunks.get(key);
+            if (!oldC) continue;
+
+            const stash = [];
+            const baseX = cx * this.chunkSize,
+                  baseY = cy * this.chunkSize;
+            for (let y = 0; y < this.chunkSize; y++) {
+                for (let x = 0; x < this.chunkSize; x++) {
+                    const coord = `${baseX + x},${baseY + y}`;
+                    const m = oldC.meta[y][x];
+                    if (vis.has(coord) || m.memoryAlpha > 0) {
+                        stash.push({ x, y, t: oldC.tiles[y][x], m: { ...m } });
+                    }
+                }
+            }
+
+            this.chunks.delete(key);
+            this.ensureChunk(cx, cy);
+            const fresh = this.chunks.get(key);
+            for (const s of stash) {
+                fresh.tiles[s.y][s.x] = s.t;
+                fresh.meta[s.y][s.x]  = s.m;
+            }
+        }
+    }
 }
+
