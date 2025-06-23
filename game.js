@@ -23,7 +23,7 @@ class Game {
     this.map = new GameMap();
 
     /* — спавн: ищем первую свободную клетку пола в чанке (0,0) — */
-    const firstChunk = this.map.getChunk(0, 0);
+    const firstChunk = this.map.getChunk(0, 0).tiles;
     let sx = 0, sy = 0;
     outer: for (let y = 0; y < firstChunk.length; y++) {
       for (let x = 0; x < firstChunk.length; x++) {
