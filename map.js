@@ -8,7 +8,7 @@ class GameMap {
     // размер одного чанка (в тайлах) — должен совпадать с game.js.chunkSize
     this.chunkSize   = 32;
 
-    // храним чанки: Map<"cx,cy", {tiles: bool[][], meta: {memoryAlpha,visited}[][]}>
+    // храним чанки: Map<"cx,cy", {tiles: number[][], meta: {memoryAlpha,visited}[][]}>
     this.chunks      = new Map();
 
     // чтобы не генерировать один и тот же чанк дважды параллельно
@@ -53,7 +53,7 @@ class GameMap {
     const lx = gx - cx * this.chunkSize;
     const ly = gy - cy * this.chunkSize;
     if (lx < 0 || ly < 0 || lx >= this.chunkSize || ly >= this.chunkSize) return false;
-    return !!chunk.tiles[ly][lx];
+    return chunk.tiles[ly][lx] !== 0; // 0 = wall
   }
 
   /**
@@ -112,69 +112,104 @@ class GameMap {
 
   /**
    * Процедурная генерация одного чанка cx,cy:
-   * — строим лабиринт на N×N клетках методом spanning-tree
-   * — раскладываем его в actualTiles через 3×3 масштаб
-   * Возвращает Boolean[][] размером chunkSize×chunkSize.
+   * создаёт набор комнат размером 4-8 тайлов и соединяет их
+   * коридорами шириной 2 тайла. Типы клеток:
+   *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
+   * Возвращает number[][] размером chunkSize×chunkSize.
    */
   _generateChunk(cx, cy) {
-    const N    = 11;   // размер «маппинга» комн/коридоров
-    const S    = this.chunkSize;
-    // пустая сетка
-    const grid = Array.from({ length: S }, () => Array(S).fill(false));
+    const WALL = 0, CORR = 1, ROOM = 2, DOOR = 3;
+    const S = this.chunkSize;
+    const grid = Array.from({ length: S }, () => Array(S).fill(WALL));
 
-    // 1) spanning-tree на N×N
-    const conn    = Array.from({ length: N }, () =>
-      Array.from({ length: N }, () => ({ N:0,S:0,E:0,W:0 }))
-    );
-    const visited = Array.from({ length: N }, () => Array(N).fill(false));
-    const stack   = [{ x: Math.floor(N/2), y: Math.floor(N/2) }];
-    visited[stack[0].y][stack[0].x] = true;
+    const rooms = [];
+    const roomCount = 3 + Math.floor(Math.random()*3); // 3-5 комнат
+    const margin = 2;
 
-    while (stack.length) {
-      const top = stack[stack.length-1];
-      const nbr = [];
-      if (top.y>0   && !visited[top.y-1][top.x]) nbr.push('N');
-      if (top.y<N-1 && !visited[top.y+1][top.x]) nbr.push('S');
-      if (top.x>0   && !visited[top.y][top.x-1]) nbr.push('W');
-      if (top.x<N-1 && !visited[top.y][top.x+1]) nbr.push('E');
+    function rand(min, max) { return Math.floor(Math.random()*(max-min+1))+min; }
 
-      if (nbr.length) {
-        const d = nbr[Math.floor(Math.random()*nbr.length)];
-        let nx = top.x, ny = top.y;
-        if (d==='N') ny--;
-        if (d==='S') ny++;
-        if (d==='W') nx--;
-        if (d==='E') nx++;
-        conn[top.y][top.x][d] = 1;
-        conn[ny][nx][{N:'S',S:'N',E:'W',W:'E'}[d]] = 1;
-        visited[ny][nx] = true;
-        stack.push({ x: nx, y: ny });
-      } else {
-        stack.pop();
+    // попытки расположить комнаты без перекрытия
+    for (let r=0; r<roomCount; r++) {
+      for (let t=0; t<20; t++) {
+        const w = rand(4,8);
+        const h = rand(4,8);
+        const x = rand(margin, S - w - margin);
+        const y = rand(margin, S - h - margin);
+        let overlap = false;
+        for (let yy=y-1; yy<y+h+1 && !overlap; yy++) {
+          for (let xx=x-1; xx<x+w+1; xx++) {
+            if (grid[yy][xx] !== WALL) { overlap = true; break; }
+          }
+        }
+        if (!overlap) {
+          rooms.push({x,y,w,h});
+          for (let yy=y; yy<y+h; yy++)
+            for (let xx=x; xx<x+w; xx++)
+              grid[yy][xx] = ROOM;
+          break;
+        }
       }
     }
 
-    // 2) масштабируем N×N → chunkSize×chunkSize
-    //    каждый блок N→3×3 тайла, плюс коридоры
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const bx = i*3, by = j*3;
-        // всегда 2×2 «комната»
-        grid[by][bx]     = true;
-        grid[by][bx+1]   = true;
-        grid[by+1][bx]   = true;
-        grid[by+1][bx+1] = true;
-        // если есть связь на восток — 2×1 коридор
-        if (conn[j][i].E) {
-          grid[by][bx+2]   = true;
-          grid[by+1][bx+2] = true;
+    function carveDoor(room) {
+      const sides = ['N','S','W','E'];
+      while (sides.length) {
+        const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
+        if (side==='N' && room.y>1) {
+          const x = rand(room.x+1, room.x+room.w-2);
+          grid[room.y][x] = DOOR;
+          return {x, y: room.y-1};
         }
-        // если связь на юг — 1×2 коридор
-        if (conn[j][i].S) {
-          grid[by+2][bx]   = true;
-          grid[by+2][bx+1] = true;
+        if (side==='S' && room.y+room.h < S-1) {
+          const x = rand(room.x+1, room.x+room.w-2);
+          grid[room.y+room.h-1][x] = DOOR;
+          return {x, y: room.y+room.h};
+        }
+        if (side==='W' && room.x>1) {
+          const y = rand(room.y+1, room.y+room.h-2);
+          grid[y][room.x] = DOOR;
+          return {x: room.x-1, y};
+        }
+        if (side==='E' && room.x+room.w < S-1) {
+          const y = rand(room.y+1, room.y+room.h-2);
+          grid[y][room.x+room.w-1] = DOOR;
+          return {x: room.x+room.w, y};
         }
       }
+      // если все стороны заняты — центр
+      return {x: Math.floor(room.x+room.w/2), y: Math.floor(room.y+room.h/2)};
+    }
+
+    function digHoriz(y,x1,x2) {
+      const step = Math.sign(x2 - x1);
+      for (let x=x1; x!==x2+step; x+=step) {
+        grid[y][x] = CORR;
+        if (y+1<S) grid[y+1][x] = CORR;
+      }
+    }
+
+    function digVert(x,y1,y2) {
+      const step = Math.sign(y2 - y1);
+      for (let y=y1; y!==y2+step; y+=step) {
+        grid[y][x] = CORR;
+        if (x+1<S) grid[y][x+1] = CORR;
+      }
+    }
+
+    function digCorridor(a,b) {
+      if (Math.random()<0.5) {
+        digHoriz(a.y, a.x, b.x);
+        digVert(b.x, a.y, b.y);
+      } else {
+        digVert(a.x, a.y, b.y);
+        digHoriz(b.y, a.x, b.x);
+      }
+    }
+
+    for (let i=1; i<rooms.length; i++) {
+      const doorA = carveDoor(rooms[i-1]);
+      const doorB = carveDoor(rooms[i]);
+      digCorridor(doorA, doorB);
     }
 
     return grid;
