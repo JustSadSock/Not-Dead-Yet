@@ -126,5 +126,7 @@ class Game {
   }
 }
 
-window.onload = () => new Game();
-window.game = this;
+window.onload = () => {
+  window.game = new Game();
+};
+
