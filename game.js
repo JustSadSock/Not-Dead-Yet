@@ -13,10 +13,13 @@ const CANVAS_HEIGHT  = 480;
 class Game {
   constructor() {
     /* — canvas — */
-    this.canvas = document.createElement('canvas');
+    this.canvas = document.getElementById('gameCanvas');
+    if (!this.canvas) {
+      this.canvas = document.createElement('canvas');
+      document.body.appendChild(this.canvas);
+    }
     this.canvas.width  = CANVAS_WIDTH;
     this.canvas.height = CANVAS_HEIGHT;
-    document.body.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d');
 
     /* — карта — */
