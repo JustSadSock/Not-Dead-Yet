@@ -34,6 +34,7 @@ window.Input = {
     if(key === 's' || key === 'arrowdown') { keysPressed.s = true; }
     if(key === 'd' || key === 'arrowright') { keysPressed.d = true; }
     updateKeyInput();
+    e.preventDefault();
   });
   document.addEventListener('keyup', function(e){
     const key = e.key.toLowerCase();
@@ -42,6 +43,7 @@ window.Input = {
     if(key === 's' || key === 'arrowdown') { keysPressed.s = false; }
     if(key === 'd' || key === 'arrowright') { keysPressed.d = false; }
     updateKeyInput();
+    e.preventDefault();
   });
 
   // Joystick control
