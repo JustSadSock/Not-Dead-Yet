@@ -310,6 +310,63 @@ class GameMap {
       }
     }
 
+    // Deterministic edge connectors so adjacent chunks line up
+    function edgeRand(dir, extra = 0) {
+      let ox = 0, oy = 0;
+      if (dir === 'N') oy = -1;
+      if (dir === 'S') oy = 1;
+      if (dir === 'W') ox = -1;
+      if (dir === 'E') ox = 1;
+      const seed = ((cx + cx + ox) * 73856093) ^ ((cy + cy + oy) * 19349663) ^ extra;
+      const v = Math.sin(seed) * 43758.5453;
+      return v - Math.floor(v);
+    }
+
+    function carveEdge(dir, pos) {
+      if (dir === 'N') {
+        for (let i=0; i<2; i++) {
+          grid[i][pos] = CORR;
+          grid[i][pos+1] = CORR;
+        }
+        return { x: pos, y: 2, side: 'N' };
+      }
+      if (dir === 'S') {
+        for (let i=0; i<2; i++) {
+          grid[S-1-i][pos] = CORR;
+          grid[S-1-i][pos+1] = CORR;
+        }
+        return { x: pos, y: S-3, side: 'S' };
+      }
+      if (dir === 'W') {
+        for (let i=0; i<2; i++) {
+          grid[pos][i] = CORR;
+          grid[pos+1][i] = CORR;
+        }
+        return { x: 2, y: pos, side: 'W' };
+      }
+      if (dir === 'E') {
+        for (let i=0; i<2; i++) {
+          grid[pos][S-1-i] = CORR;
+          grid[pos+1][S-1-i] = CORR;
+        }
+        return { x: S-3, y: pos, side: 'E' };
+      }
+    }
+
+    const edges = ['N','S','W','E'];
+    const connectors = [];
+    for (let dir of edges) {
+      if (edgeRand(dir) < 0.5) continue;
+      const pos = 2 + Math.floor(edgeRand(dir, 1) * (S - 6));
+      connectors.push(carveEdge(dir, pos));
+    }
+    if (!connectors.length) {
+      const dir = edges[Math.floor(edgeRand('N', 2) * edges.length)];
+      const pos = 2 + Math.floor(edgeRand(dir, 3) * (S - 6));
+      connectors.push(carveEdge(dir, pos));
+    }
+    doorPoints.push(...connectors);
+
     for (let i=1; i<doorPoints.length; i++) {
       digCorridor(doorPoints[i-1], doorPoints[i]);
     }
