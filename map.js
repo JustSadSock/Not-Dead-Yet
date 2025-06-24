@@ -186,35 +186,27 @@ class GameMap {
       while (sides.length) {
         const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
         if (side==='N' && room.y>3) {
-          const x = rand(room.x+1, room.x+room.w-3);
+          const x = rand(room.x+1, room.x+room.w-2);
           grid[room.y][x] = DOOR;
-          grid[room.y][x+1] = DOOR;
           grid[room.y-1][x] = CORR;
-          grid[room.y-1][x+1] = CORR;
           return {x, y: room.y-2, side};
         }
         if (side==='S' && room.y+room.h < S-3) {
-          const x = rand(room.x+1, room.x+room.w-3);
+          const x = rand(room.x+1, room.x+room.w-2);
           grid[room.y+room.h-1][x] = DOOR;
-          grid[room.y+room.h-1][x+1] = DOOR;
           grid[room.y+room.h][x] = CORR;
-          grid[room.y+room.h][x+1] = CORR;
           return {x, y: room.y+room.h+1, side};
         }
         if (side==='W' && room.x>3) {
-          const y = rand(room.y+1, room.y+room.h-3);
+          const y = rand(room.y+1, room.y+room.h-2);
           grid[y][room.x] = DOOR;
-          grid[y+1][room.x] = DOOR;
           grid[y][room.x-1] = CORR;
-          grid[y+1][room.x-1] = CORR;
           return {x: room.x-2, y, side};
         }
         if (side==='E' && room.x+room.w < S-3) {
-          const y = rand(room.y+1, room.y+room.h-3);
+          const y = rand(room.y+1, room.y+room.h-2);
           grid[y][room.x+room.w-1] = DOOR;
-          grid[y+1][room.x+room.w-1] = DOOR;
           grid[y][room.x+room.w] = CORR;
-          grid[y+1][room.x+room.w] = CORR;
           return {x: room.x+room.w+1, y, side};
         }
       }
@@ -235,7 +227,59 @@ class GameMap {
       }
     }
 
+    function nearRoom(x,y) {
+      for (let dy=-1; dy<=1; dy++) {
+        for (let dx=-1; dx<=1; dx++) {
+          const nx=x+dx, ny=y+dy;
+          if (nx<0||ny<0||nx>=S||ny>=S) continue;
+          if (grid[ny][nx] === ROOM) return true;
+        }
+      }
+      return false;
+    }
+
+    function bfsPath(start, goal) {
+      const q=[start];
+      const prev=new Map();
+      const key=(p)=>`${p.x},${p.y}`;
+      const visited=new Set([key(start)]);
+      const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+      while(q.length){
+        const cur=q.shift();
+        if(cur.x===goal.x && cur.y===goal.y) break;
+        for(const [dx,dy] of dirs){
+          const nx=cur.x+dx, ny=cur.y+dy;
+          if(nx<0||ny<0||nx>=S||ny>=S) continue;
+          const k=key({x:nx,y:ny});
+          if(visited.has(k)) continue;
+          if(grid[ny][nx]===ROOM) continue;
+          if(nearRoom(nx,ny) && !(nx===goal.x&&ny===goal.y)) continue;
+          visited.add(k);
+          prev.set(k,cur);
+          q.push({x:nx,y:ny});
+        }
+      }
+      const gk=key(goal);
+      if(!visited.has(gk)) return null;
+      const path=[];
+      let cur=goal;
+      while(key(cur)!==key(start)){
+        path.push(cur);
+        cur=prev.get(key(cur));
+      }
+      path.push(start);
+      path.reverse();
+      return path;
+    }
+
     function digCorridor(a,b) {
+      const path=bfsPath(a,b);
+      if(path){
+        for(const p of path){
+          grid[p.y][p.x]=CORR;
+        }
+        return;
+      }
       if (Math.random()<0.5) {
         digHoriz(a.y, a.x, b.x);
         digVert(b.x, a.y, b.y);
