@@ -143,7 +143,7 @@ class GameMap {
   /**
    * Процедурная генерация одного чанка cx,cy:
    * создаёт набор комнат размером 4-8 тайлов и соединяет их
-   * коридорами шириной 1 тайл. Типы клеток:
+   * коридорами шириной 2 тайла. Типы клеток:
    *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
    * Возвращает number[][] размером chunkSize×chunkSize.
    */
@@ -181,33 +181,40 @@ class GameMap {
       }
     }
 
+    // создаёт двойную дверь и небольшой тамбур перед ней
     function carveDoor(room, used = new Set()) {
       const sides = ['N','S','W','E'].filter(s => !used.has(s));
       while (sides.length) {
         const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
-        if (side==='N' && room.y>3) {
-          const x = rand(room.x+1, room.x+room.w-2);
-          grid[room.y][x] = DOOR;
-          grid[room.y-1][x] = CORR;
-          return {x, y: room.y-2, side};
+        if (side==='N' && room.y>4) {
+          const x = rand(room.x+1, room.x+room.w-3);
+          grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
+          grid[room.y-1][x] = CORR; grid[room.y-1][x+1] = CORR;
+          grid[room.y-2][x] = CORR; grid[room.y-2][x+1] = CORR;
+          return {x, y: room.y-3, side};
         }
-        if (side==='S' && room.y+room.h < S-3) {
-          const x = rand(room.x+1, room.x+room.w-2);
-          grid[room.y+room.h-1][x] = DOOR;
-          grid[room.y+room.h][x] = CORR;
-          return {x, y: room.y+room.h+1, side};
+        if (side==='S' && room.y+room.h < S-4) {
+          const x = rand(room.x+1, room.x+room.w-3);
+          const y0 = room.y+room.h-1;
+          grid[y0][x] = DOOR; grid[y0][x+1] = DOOR;
+          grid[y0+1][x] = CORR; grid[y0+1][x+1] = CORR;
+          grid[y0+2][x] = CORR; grid[y0+2][x+1] = CORR;
+          return {x, y: y0+3, side};
         }
-        if (side==='W' && room.x>3) {
-          const y = rand(room.y+1, room.y+room.h-2);
-          grid[y][room.x] = DOOR;
-          grid[y][room.x-1] = CORR;
-          return {x: room.x-2, y, side};
+        if (side==='W' && room.x>4) {
+          const y = rand(room.y+1, room.y+room.h-3);
+          grid[y][room.x] = DOOR; grid[y+1][room.x] = DOOR;
+          grid[y][room.x-1] = CORR; grid[y+1][room.x-1] = CORR;
+          grid[y][room.x-2] = CORR; grid[y+1][room.x-2] = CORR;
+          return {x: room.x-3, y, side};
         }
-        if (side==='E' && room.x+room.w < S-3) {
-          const y = rand(room.y+1, room.y+room.h-2);
-          grid[y][room.x+room.w-1] = DOOR;
-          grid[y][room.x+room.w] = CORR;
-          return {x: room.x+room.w+1, y, side};
+        if (side==='E' && room.x+room.w < S-4) {
+          const y = rand(room.y+1, room.y+room.h-3);
+          const x0 = room.x+room.w-1;
+          grid[y][x0] = DOOR; grid[y+1][x0] = DOOR;
+          grid[y][x0+1] = CORR; grid[y+1][x0+1] = CORR;
+          grid[y][x0+2] = CORR; grid[y+1][x0+2] = CORR;
+          return {x: x0+3, y, side};
         }
       }
       return null;
@@ -217,6 +224,7 @@ class GameMap {
       const step = Math.sign(x2 - x1);
       for (let x=x1; x!==x2+step; x+=step) {
         grid[y][x] = CORR;
+        if (y+1 < S) grid[y+1][x] = CORR;
       }
     }
 
@@ -224,12 +232,13 @@ class GameMap {
       const step = Math.sign(y2 - y1);
       for (let y=y1; y!==y2+step; y+=step) {
         grid[y][x] = CORR;
+        if (x+1 < S) grid[y][x+1] = CORR;
       }
     }
 
     function nearRoom(x,y) {
-      for (let dy=-1; dy<=1; dy++) {
-        for (let dx=-1; dx<=1; dx++) {
+      for (let dy=-2; dy<=2; dy++) {
+        for (let dx=-2; dx<=2; dx++) {
           const nx=x+dx, ny=y+dy;
           if (nx<0||ny<0||nx>=S||ny>=S) continue;
           if (grid[ny][nx] === ROOM) return true;
@@ -276,7 +285,9 @@ class GameMap {
       const path=bfsPath(a,b);
       if(path){
         for(const p of path){
-          grid[p.y][p.x]=CORR;
+          for(let dy=0; dy<2; dy++)
+            for(let dx=0; dx<2; dx++)
+              if(p.x+dx < S && p.y+dy < S) grid[p.y+dy][p.x+dx]=CORR;
         }
         return;
       }
@@ -292,7 +303,7 @@ class GameMap {
     const doorPoints = [];
     for (let room of rooms) {
       const used = new Set();
-      const doorNum = 1 + Math.floor(Math.random()*3);
+      const doorNum = 2 + Math.floor(Math.random()*2);
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
         if (d) { doorPoints.push(d); used.add(d.side); }
