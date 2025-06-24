@@ -113,7 +113,7 @@ class GameMap {
   /**
    * Процедурная генерация одного чанка cx,cy:
    * создаёт набор комнат размером 4-8 тайлов и соединяет их
-   * коридорами шириной 2 тайла. Типы клеток:
+   * коридорами шириной 1 тайл. Типы клеток:
    *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
    * Возвращает number[][] размером chunkSize×chunkSize.
    */
@@ -136,8 +136,8 @@ class GameMap {
         const x = rand(margin, S - w - margin);
         const y = rand(margin, S - h - margin);
         let overlap = false;
-        for (let yy=y-1; yy<y+h+1 && !overlap; yy++) {
-          for (let xx=x-1; xx<x+w+1; xx++) {
+        for (let yy=Math.max(0, y-3); yy<Math.min(S, y+h+3) && !overlap; yy++) {
+          for (let xx=Math.max(0, x-3); xx<Math.min(S, x+w+3); xx++) {
             if (grid[yy][xx] !== WALL) { overlap = true; break; }
           }
         }
@@ -151,40 +151,42 @@ class GameMap {
       }
     }
 
-    function carveDoor(room) {
-      const sides = ['N','S','W','E'];
+    function carveDoor(room, used = new Set()) {
+      const sides = ['N','S','W','E'].filter(s=>!used.has(s));
       while (sides.length) {
         const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
-        if (side==='N' && room.y>1) {
+        if (side==='N' && room.y>2) {
           const x = rand(room.x+1, room.x+room.w-2);
           grid[room.y][x] = DOOR;
-          return {x, y: room.y-1};
+          grid[room.y-1][x] = CORR;
+          return {x, y: room.y-2, side};
         }
-        if (side==='S' && room.y+room.h < S-1) {
+        if (side==='S' && room.y+room.h < S-2) {
           const x = rand(room.x+1, room.x+room.w-2);
           grid[room.y+room.h-1][x] = DOOR;
-          return {x, y: room.y+room.h};
+          grid[room.y+room.h][x] = CORR;
+          return {x, y: room.y+room.h+1, side};
         }
-        if (side==='W' && room.x>1) {
+        if (side==='W' && room.x>2) {
           const y = rand(room.y+1, room.y+room.h-2);
           grid[y][room.x] = DOOR;
-          return {x: room.x-1, y};
+          grid[y][room.x-1] = CORR;
+          return {x: room.x-2, y, side};
         }
-        if (side==='E' && room.x+room.w < S-1) {
+        if (side==='E' && room.x+room.w < S-2) {
           const y = rand(room.y+1, room.y+room.h-2);
           grid[y][room.x+room.w-1] = DOOR;
-          return {x: room.x+room.w, y};
+          grid[y][room.x+room.w] = CORR;
+          return {x: room.x+room.w+1, y, side};
         }
       }
-      // если все стороны заняты — центр
-      return {x: Math.floor(room.x+room.w/2), y: Math.floor(room.y+room.h/2)};
+      return null;
     }
 
     function digHoriz(y,x1,x2) {
       const step = Math.sign(x2 - x1);
       for (let x=x1; x!==x2+step; x+=step) {
         grid[y][x] = CORR;
-        if (y+1<S) grid[y+1][x] = CORR;
       }
     }
 
@@ -192,7 +194,6 @@ class GameMap {
       const step = Math.sign(y2 - y1);
       for (let y=y1; y!==y2+step; y+=step) {
         grid[y][x] = CORR;
-        if (x+1<S) grid[y][x+1] = CORR;
       }
     }
 
@@ -206,10 +207,15 @@ class GameMap {
       }
     }
 
-    for (let i=1; i<rooms.length; i++) {
-      const doorA = carveDoor(rooms[i-1]);
-      const doorB = carveDoor(rooms[i]);
-      digCorridor(doorA, doorB);
+    const doorPoints = [];
+    for (let room of rooms) {
+      const used = new Set();
+      const d1 = carveDoor(room, used); if (d1) { doorPoints.push(d1); used.add(d1.side); }
+      const d2 = carveDoor(room, used); if (d2) doorPoints.push(d2);
+    }
+
+    for (let i=1; i<doorPoints.length; i++) {
+      digCorridor(doorPoints[i-1], doorPoints[i]);
     }
 
     return grid;
