@@ -30,7 +30,9 @@ if (!window.Input) window.Input = { dx:0, dy:0 };
 // ——————————————
 const gameMap = new GameMap();
 gameMap.ensureChunk(0, 0);
-player.x = player.y = gameMap.chunkSize / 2;
+const spawn = gameMap.getRandomRoomTile(0, 0);
+player.x = spawn.x;
+player.y = spawn.y;
 
 // таймер и набор для пакетной регенерации
 let lastTime   = performance.now();

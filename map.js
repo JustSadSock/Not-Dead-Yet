@@ -16,6 +16,36 @@ class GameMap {
   }
 
   /**
+   * Возвращает случайную клетку типа ROOM внутри указанного чанка
+   * (глобальные координаты). Если комнат нет, возвращает центр чанка.
+   */
+  getRandomRoomTile(cx = 0, cy = 0) {
+    this.ensureChunk(cx, cy);
+    const key = `${cx},${cy}`;
+    const chunk = this.chunks.get(key);
+    if (!chunk) {
+      return { x: cx * this.chunkSize + Math.floor(this.chunkSize / 2),
+               y: cy * this.chunkSize + Math.floor(this.chunkSize / 2) };
+    }
+    const tiles = [];
+    for (let y = 0; y < this.chunkSize; y++) {
+      for (let x = 0; x < this.chunkSize; x++) {
+        if (chunk.tiles[y][x] === 2) { // ROOM
+          tiles.push({
+            x: cx * this.chunkSize + x,
+            y: cy * this.chunkSize + y
+          });
+        }
+      }
+    }
+    if (!tiles.length) {
+      return { x: cx * this.chunkSize + Math.floor(this.chunkSize / 2),
+               y: cy * this.chunkSize + Math.floor(this.chunkSize / 2) };
+    }
+    return tiles[Math.floor(Math.random() * tiles.length)];
+  }
+
+  /**
    * Убедиться, что чанк (cx,cy) есть в this.chunks.
    * Если нет — сгенерировать сразу tiles и meta.
    */
@@ -152,31 +182,39 @@ class GameMap {
     }
 
     function carveDoor(room, used = new Set()) {
-      const sides = ['N','S','W','E'].filter(s=>!used.has(s));
+      const sides = ['N','S','W','E'].filter(s => !used.has(s));
       while (sides.length) {
         const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
-        if (side==='N' && room.y>2) {
-          const x = rand(room.x+1, room.x+room.w-2);
+        if (side==='N' && room.y>3) {
+          const x = rand(room.x+1, room.x+room.w-3);
           grid[room.y][x] = DOOR;
+          grid[room.y][x+1] = DOOR;
           grid[room.y-1][x] = CORR;
+          grid[room.y-1][x+1] = CORR;
           return {x, y: room.y-2, side};
         }
-        if (side==='S' && room.y+room.h < S-2) {
-          const x = rand(room.x+1, room.x+room.w-2);
+        if (side==='S' && room.y+room.h < S-3) {
+          const x = rand(room.x+1, room.x+room.w-3);
           grid[room.y+room.h-1][x] = DOOR;
+          grid[room.y+room.h-1][x+1] = DOOR;
           grid[room.y+room.h][x] = CORR;
+          grid[room.y+room.h][x+1] = CORR;
           return {x, y: room.y+room.h+1, side};
         }
-        if (side==='W' && room.x>2) {
-          const y = rand(room.y+1, room.y+room.h-2);
+        if (side==='W' && room.x>3) {
+          const y = rand(room.y+1, room.y+room.h-3);
           grid[y][room.x] = DOOR;
+          grid[y+1][room.x] = DOOR;
           grid[y][room.x-1] = CORR;
+          grid[y+1][room.x-1] = CORR;
           return {x: room.x-2, y, side};
         }
-        if (side==='E' && room.x+room.w < S-2) {
-          const y = rand(room.y+1, room.y+room.h-2);
+        if (side==='E' && room.x+room.w < S-3) {
+          const y = rand(room.y+1, room.y+room.h-3);
           grid[y][room.x+room.w-1] = DOOR;
+          grid[y+1][room.x+room.w-1] = DOOR;
           grid[y][room.x+room.w] = CORR;
+          grid[y+1][room.x+room.w] = CORR;
           return {x: room.x+room.w+1, y, side};
         }
       }
@@ -210,8 +248,11 @@ class GameMap {
     const doorPoints = [];
     for (let room of rooms) {
       const used = new Set();
-      const d1 = carveDoor(room, used); if (d1) { doorPoints.push(d1); used.add(d1.side); }
-      const d2 = carveDoor(room, used); if (d2) doorPoints.push(d2);
+      const doorNum = 1 + Math.floor(Math.random()*3);
+      for (let i=0; i<doorNum; i++) {
+        const d = carveDoor(room, used);
+        if (d) { doorPoints.push(d); used.add(d.side); }
+      }
     }
 
     for (let i=1; i<doorPoints.length; i++) {
