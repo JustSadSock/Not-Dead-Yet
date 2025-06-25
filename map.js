@@ -171,24 +171,85 @@ class GameMap {
 
     function rand(min, max) { return Math.floor(rng()*(max-min+1))+min; }
 
-    // попытки расположить комнаты без перекрытия
+    function roomTiles(shape,x,y,w,h,orient=0){
+      const tiles=[];
+      if(shape==='rect'){
+        for(let yy=y;yy<y+h;yy++)
+          for(let xx=x;xx<x+w;xx++)
+            tiles.push({x:xx,y:yy});
+      }else if(shape==='L'){
+        const hw=Math.floor(w/2), hh=Math.floor(h/2);
+        if(orient===0){ // missing TL
+          for(let yy=y;yy<y+h;yy++)
+            for(let xx=x+hw;xx<x+w;xx++)
+              tiles.push({x:xx,y:yy});
+          for(let yy=y+hh;yy<y+h;yy++)
+            for(let xx=x;xx<x+hw;xx++)
+              tiles.push({x:xx,y:yy});
+        }else if(orient===1){ // missing TR
+          for(let yy=y;yy<y+h;yy++)
+            for(let xx=x;xx<x+hw;xx++)
+              tiles.push({x:xx,y:yy});
+          for(let yy=y+hh;yy<y+h;yy++)
+            for(let xx=x+hw;xx<x+w;xx++)
+              tiles.push({x:xx,y:yy});
+        }else if(orient===2){ // missing BR
+          for(let yy=y;yy<y+hh;yy++)
+            for(let xx=x;xx<x+w;xx++)
+              tiles.push({x:xx,y:yy});
+          for(let yy=y+hh;yy<y+h;yy++)
+            for(let xx=x;xx<x+hw;xx++)
+              tiles.push({x:xx,y:yy});
+        }else{ // missing BL
+          for(let yy=y;yy<y+hh;yy++)
+            for(let xx=x;xx<x+w;xx++)
+              tiles.push({x:xx,y:yy});
+          for(let yy=y+hh;yy<y+h;yy++)
+            for(let xx=x+hw;xx<x+w;xx++)
+              tiles.push({x:xx,y:yy});
+        }
+      }else if(shape==='cross'){
+        const hw=Math.floor(w/3), hh=Math.floor(h/3);
+        const cx=x+Math.floor(w/2), cy=y+Math.floor(h/2);
+        for(let yy=y;yy<y+h;yy++)
+          for(let xx=cx-hw;xx<=cx+hw;xx++)
+            tiles.push({x:xx,y:yy});
+        for(let yy=cy-hh;yy<=cy+hh;yy++)
+          for(let xx=x;xx<x+w;xx++)
+            tiles.push({x:xx,y:yy});
+      }
+      return tiles;
+    }
+
+    function canPlace(tiles){
+      for(const {x,y} of tiles){
+        for(let dy=-3;dy<=3;dy++){
+          for(let dx=-3;dx<=3;dx++){
+            const nx=x+dx, ny=y+dy;
+            if(nx<0||ny<0||nx>=S||ny>=S) continue;
+            if(grid[ny][nx]!==WALL) return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    // попытки расположить комнаты без перекрытия и с разными формами
     for (let r=0; r<roomCount; r++) {
       for (let t=0; t<20; t++) {
         const w = rand(4,8);
         const h = rand(4,8);
         const x = rand(margin, S - w - margin);
         const y = rand(margin, S - h - margin);
-        let overlap = false;
-        for (let yy=Math.max(0, y-3); yy<Math.min(S, y+h+3) && !overlap; yy++) {
-          for (let xx=Math.max(0, x-3); xx<Math.min(S, x+w+3); xx++) {
-            if (grid[yy][xx] !== WALL) { overlap = true; break; }
-          }
-        }
-        if (!overlap) {
-          rooms.push({x,y,w,h});
-          for (let yy=y; yy<y+h; yy++)
-            for (let xx=x; xx<x+w; xx++)
-              grid[yy][xx] = ROOM;
+        let shape='rect';
+        let orient=0;
+        const p=rng();
+        if(p<0.15 && w>4 && h>4){ shape='L'; orient=Math.floor(rng()*4); }
+        else if(p<0.2 && w>5 && h>5){ shape='cross'; }
+        const tiles=roomTiles(shape,x,y,w,h,orient);
+        if(canPlace(tiles)){
+          rooms.push({x,y,w,h,shape,orient});
+          for(const {x:tx,y:ty} of tiles) grid[ty][tx]=ROOM;
           break;
         }
       }
@@ -201,6 +262,7 @@ class GameMap {
         const side = sides.splice(Math.floor(rng()*sides.length),1)[0];
         if (side==='N' && room.y>4) {
           const x = rand(room.x+1, room.x+room.w-3);
+          if(grid[room.y][x]!==ROOM||grid[room.y][x+1]!==ROOM) continue;
           grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
           grid[room.y-1][x] = CORR; grid[room.y-1][x+1] = CORR;
           grid[room.y-2][x] = CORR; grid[room.y-2][x+1] = CORR;
@@ -209,6 +271,7 @@ class GameMap {
         if (side==='S' && room.y+room.h < S-4) {
           const x = rand(room.x+1, room.x+room.w-3);
           const y0 = room.y+room.h-1;
+          if(grid[y0][x]!==ROOM||grid[y0][x+1]!==ROOM) continue;
           grid[y0][x] = DOOR; grid[y0][x+1] = DOOR;
           grid[y0+1][x] = CORR; grid[y0+1][x+1] = CORR;
           grid[y0+2][x] = CORR; grid[y0+2][x+1] = CORR;
@@ -216,6 +279,7 @@ class GameMap {
         }
         if (side==='W' && room.x>4) {
           const y = rand(room.y+1, room.y+room.h-3);
+          if(grid[y][room.x]!==ROOM||grid[y+1][room.x]!==ROOM) continue;
           grid[y][room.x] = DOOR; grid[y+1][room.x] = DOOR;
           grid[y][room.x-1] = CORR; grid[y+1][room.x-1] = CORR;
           grid[y][room.x-2] = CORR; grid[y+1][room.x-2] = CORR;
@@ -224,6 +288,7 @@ class GameMap {
         if (side==='E' && room.x+room.w < S-4) {
           const y = rand(room.y+1, room.y+room.h-3);
           const x0 = room.x+room.w-1;
+          if(grid[y][x0]!==ROOM||grid[y+1][x0]!==ROOM) continue;
           grid[y][x0] = DOOR; grid[y+1][x0] = DOOR;
           grid[y][x0+1] = CORR; grid[y+1][x0+1] = CORR;
           grid[y][x0+2] = CORR; grid[y+1][x0+2] = CORR;
@@ -260,46 +325,56 @@ class GameMap {
       return false;
     }
 
-    function bfsPath(start, goal) {
-      const q=[start];
-      const prev=new Map();
-      const key=(p)=>`${p.x},${p.y}`;
-      const visited=new Set([key(start)]);
-      const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-      while(q.length){
-        const cur=q.shift();
-        if(cur.x===goal.x && cur.y===goal.y) break;
+    function aStarPath(start, goal) {
+      const key=p=>`${p.x},${p.y}`;
+      const open=[start];
+      const came=new Map();
+      const gScore=new Map([[key(start),0]]);
+      const fScore=new Map([[key(start),Math.hypot(goal.x-start.x,goal.y-start.y)]]);
+      const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+
+      while(open.length){
+        open.sort((a,b)=>fScore.get(key(a))-fScore.get(key(b)));
+        const cur=open.shift();
+        if(cur.x===goal.x&&cur.y===goal.y) break;
         for(const [dx,dy] of dirs){
           const nx=cur.x+dx, ny=cur.y+dy;
           if(nx<0||ny<0||nx>=S||ny>=S) continue;
-          const k=key({x:nx,y:ny});
-          if(visited.has(k)) continue;
+          if(Math.abs(dx)===1 && Math.abs(dy)===1){
+            if(grid[cur.y][cur.x+dx]===ROOM || grid[cur.y+dy][cur.x]===ROOM) continue;
+          }
           if(grid[ny][nx]===ROOM) continue;
           if(nearRoom(nx,ny) && !(nx===goal.x&&ny===goal.y)) continue;
-          visited.add(k);
-          prev.set(k,cur);
-          q.push({x:nx,y:ny});
+          const step=Math.hypot(dx,dy);
+          const tg=(gScore.get(key(cur))||Infinity)+step;
+          if(tg < (gScore.get(key({x:nx,y:ny}))||Infinity)){
+            came.set(key({x:nx,y:ny}),cur);
+            gScore.set(key({x:nx,y:ny}),tg);
+            fScore.set(key({x:nx,y:ny}),tg+Math.hypot(goal.x-nx,goal.y-ny));
+            if(!open.find(p=>p.x===nx&&p.y===ny)) open.push({x:nx,y:ny});
+          }
         }
       }
       const gk=key(goal);
-      if(!visited.has(gk)) return null;
-      const path=[];
+      if(!came.has(gk) && key(start)!==gk) return null;
+      const path=[goal];
       let cur=goal;
       while(key(cur)!==key(start)){
+        cur=came.get(key(cur));
+        if(!cur){ return null; }
         path.push(cur);
-        cur=prev.get(key(cur));
       }
-      path.push(start);
       path.reverse();
       return path;
     }
 
     function digCorridor(a,b) {
-      const path=bfsPath(a,b);
+      const path=aStarPath(a,b);
       if(path){
+        const width=rng()<0.5?1:2;
         for(const p of path){
-          for(let dy=0; dy<2; dy++)
-            for(let dx=0; dx<2; dx++)
+          for(let dy=0; dy<width; dy++)
+            for(let dx=0; dx<width; dx++)
               if(p.x+dx < S && p.y+dy < S) grid[p.y+dy][p.x+dx]=CORR;
         }
         return;
@@ -316,7 +391,9 @@ class GameMap {
     const doorPoints = [];
     for (let room of rooms) {
       const used = new Set();
-      const doorNum = 2 + Math.floor(rng()*2);
+      let doorNum = Math.max(1, Math.floor((room.w + room.h)/6));
+      if(rng()<0.5) doorNum++;
+      doorNum = Math.min(4, doorNum);
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
         if (d) { doorPoints.push(d); used.add(d.side); }
@@ -374,8 +451,34 @@ class GameMap {
     }
     doorPoints.push(...connectors);
 
-    for (let i=1; i<doorPoints.length; i++) {
-      digCorridor(doorPoints[i-1], doorPoints[i]);
+    function mst(points){
+      const n=points.length;
+      const visited=new Set([0]);
+      const edges=[];
+      while(visited.size<n){
+        let best=null,bi,bj;
+        for(let i of visited){
+          for(let j=0;j<n;j++) if(!visited.has(j)){
+            const dx=points[i].x-points[j].x;
+            const dy=points[i].y-points[j].y;
+            const d=dx*dx+dy*dy;
+            if(best===null||d<best){best=d;bi=i;bj=j;}
+          }
+        }
+        visited.add(bj);
+        edges.push([bi,bj]);
+      }
+      return edges;
+    }
+
+    const connections=mst(doorPoints);
+    for(const [a,b] of connections){
+      digCorridor(doorPoints[a],doorPoints[b]);
+    }
+    for(let i=0;i<doorPoints.length;i++){
+      for(let j=i+1;j<doorPoints.length;j++){
+        if(rng()<0.15) digCorridor(doorPoints[i],doorPoints[j]);
+      }
     }
 
     return grid;
