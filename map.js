@@ -224,8 +224,8 @@ class GameMap {
 
     function canPlace(tiles){
       for(const {x,y} of tiles){
-        for(let dy=-3;dy<=3;dy++){
-          for(let dx=-3;dx<=3;dx++){
+        for(let dy=-2;dy<=2;dy++){
+          for(let dx=-2;dx<=2;dx++){
             const nx=x+dx, ny=y+dy;
             if(nx<0||ny<0||nx>=S||ny>=S) continue;
             if(grid[ny][nx]!==WALL) return false;
@@ -264,6 +264,8 @@ class GameMap {
         if (side==='N' && room.y>4) {
           const x = rand(room.x+1, room.x+room.w-3);
           if(grid[room.y][x]!==ROOM||grid[room.y][x+1]!==ROOM) continue;
+          if(grid[room.y-1][x]!==WALL||grid[room.y-1][x+1]!==WALL||
+             grid[room.y-2][x]!==WALL||grid[room.y-2][x+1]!==WALL) continue;
           grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
           grid[room.y-1][x] = CORR; grid[room.y-1][x+1] = CORR;
           grid[room.y-2][x] = CORR; grid[room.y-2][x+1] = CORR;
@@ -273,6 +275,8 @@ class GameMap {
           const x = rand(room.x+1, room.x+room.w-3);
           const y0 = room.y+room.h-1;
           if(grid[y0][x]!==ROOM||grid[y0][x+1]!==ROOM) continue;
+          if(grid[y0+1][x]!==WALL||grid[y0+1][x+1]!==WALL||
+             grid[y0+2][x]!==WALL||grid[y0+2][x+1]!==WALL) continue;
           grid[y0][x] = DOOR; grid[y0][x+1] = DOOR;
           grid[y0+1][x] = CORR; grid[y0+1][x+1] = CORR;
           grid[y0+2][x] = CORR; grid[y0+2][x+1] = CORR;
@@ -281,6 +285,8 @@ class GameMap {
         if (side==='W' && room.x>4) {
           const y = rand(room.y+1, room.y+room.h-3);
           if(grid[y][room.x]!==ROOM||grid[y+1][room.x]!==ROOM) continue;
+          if(grid[y][room.x-1]!==WALL||grid[y+1][room.x-1]!==WALL||
+             grid[y][room.x-2]!==WALL||grid[y+1][room.x-2]!==WALL) continue;
           grid[y][room.x] = DOOR; grid[y+1][room.x] = DOOR;
           grid[y][room.x-1] = CORR; grid[y+1][room.x-1] = CORR;
           grid[y][room.x-2] = CORR; grid[y+1][room.x-2] = CORR;
@@ -290,6 +296,8 @@ class GameMap {
           const y = rand(room.y+1, room.y+room.h-3);
           const x0 = room.x+room.w-1;
           if(grid[y][x0]!==ROOM||grid[y+1][x0]!==ROOM) continue;
+          if(grid[y][x0+1]!==WALL||grid[y+1][x0+1]!==WALL||
+             grid[y][x0+2]!==WALL||grid[y+1][x0+2]!==WALL) continue;
           grid[y][x0] = DOOR; grid[y+1][x0] = DOOR;
           grid[y][x0+1] = CORR; grid[y+1][x0+1] = CORR;
           grid[y][x0+2] = CORR; grid[y+1][x0+2] = CORR;
@@ -318,8 +326,8 @@ class GameMap {
     }
 
     function nearRoom(x,y) {
-      for (let dy=-2; dy<=2; dy++) {
-        for (let dx=-2; dx<=2; dx++) {
+      for (let dy=-1; dy<=1; dy++) {
+        for (let dx=-1; dx<=1; dx++) {
           const nx=x+dx, ny=y+dy;
           if (nx<0||ny<0||nx>=S||ny>=S) continue;
           if (grid[ny][nx] === ROOM) return true;
