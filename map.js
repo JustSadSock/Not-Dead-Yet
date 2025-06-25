@@ -504,6 +504,26 @@ class GameMap {
       }
     }
 
+    // After placing rooms and carving corridors, surround each room's
+    // bounding box with walls so stray openings are closed off.
+    for(const room of rooms){
+      const startX = room.x - 1;
+      const endX   = room.x + room.w;
+      const startY = room.y - 1;
+      const endY   = room.y + room.h;
+      for(let y=startY; y<=endY; y++){
+        for(let x=startX; x<=endX; x++){
+          if(x<0||y<0||x>=S||y>=S) continue;
+          // Skip tiles inside the room itself
+          if(x>=room.x && x<room.x+room.w &&
+             y>=room.y && y<room.y+room.h) continue;
+          // Leave doors and corridors untouched
+          if(grid[y][x]===DOOR || grid[y][x]===CORR) continue;
+          grid[y][x]=WALL;
+        }
+      }
+    }
+
     return grid;
   }
 }
