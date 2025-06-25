@@ -30,6 +30,16 @@ node scripts/testMultiEdgeRegeneration.js
 
 The script regenerates each neighbouring chunk several times and exits with a non-zero status if any corridor connection disappears.
 
+## Geometry Consistency Test
+
+Generate a few chunks and verify basic geometric invariants:
+
+```bash
+node scripts/testGeometry.js
+```
+
+The script fails if corridor width is not two tiles everywhere or if any room cell lacks a surrounding wall where no door is present.
+
 ## Regenerating with a Different Layout
 
 Both `ensureChunk` and `regenerateChunksPreserveFOV` accept an optional
