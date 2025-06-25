@@ -163,6 +163,7 @@ class GameMap {
   _generateChunk(cx, cy, rng = Math.random) {
     const WALL = 0, CORR = 1, ROOM = 2, DOOR = 3;
     const S = this.chunkSize;
+    const CORRIDOR_WIDTH = 2;
     const grid = Array.from({ length: S }, () => Array(S).fill(WALL));
 
     const rooms = [];
@@ -301,16 +302,18 @@ class GameMap {
     function digHoriz(y,x1,x2) {
       const step = Math.sign(x2 - x1);
       for (let x=x1; x!==x2+step; x+=step) {
-        grid[y][x] = CORR;
-        if (y+1 < S) grid[y+1][x] = CORR;
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          if (y+i < S) grid[y+i][x] = CORR;
+        }
       }
     }
 
     function digVert(x,y1,y2) {
       const step = Math.sign(y2 - y1);
       for (let y=y1; y!==y2+step; y+=step) {
-        grid[y][x] = CORR;
-        if (x+1 < S) grid[y][x+1] = CORR;
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          if (x+i < S) grid[y][x+i] = CORR;
+        }
       }
     }
 
@@ -368,13 +371,12 @@ class GameMap {
       return path;
     }
 
-    function digCorridor(a,b) {
-      const path=aStarPath(a,b);
-      if(path){
-        const width=rng()<0.5?1:2;
+   function digCorridor(a,b) {
+     const path=aStarPath(a,b);
+     if(path){
         for(const p of path){
-          for(let dy=0; dy<width; dy++)
-            for(let dx=0; dx<width; dx++)
+          for(let dy=0; dy<CORRIDOR_WIDTH; dy++)
+            for(let dx=0; dx<CORRIDOR_WIDTH; dx++)
               if(p.x+dx < S && p.y+dy < S) grid[p.y+dy][p.x+dx]=CORR;
         }
         return;
@@ -421,34 +423,38 @@ class GameMap {
       return v - Math.floor(v);
     }
 
-    function carveEdge(dir, pos) {
-      if (dir === 'N') {
-        for (let i=0; i<2; i++) {
-          grid[i][pos] = CORR;
-          grid[i][pos+1] = CORR;
+   function carveEdge(dir, pos) {
+     if (dir === 'N') {
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          for (let j=0; j<CORRIDOR_WIDTH; j++) {
+            grid[i][pos+j] = CORR;
+          }
         }
-        return { x: pos, y: 2, side: 'N' };
+        return { x: pos, y: CORRIDOR_WIDTH, side: 'N' };
       }
       if (dir === 'S') {
-        for (let i=0; i<2; i++) {
-          grid[S-1-i][pos] = CORR;
-          grid[S-1-i][pos+1] = CORR;
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          for (let j=0; j<CORRIDOR_WIDTH; j++) {
+            grid[S-1-i][pos+j] = CORR;
+          }
         }
-        return { x: pos, y: S-3, side: 'S' };
+        return { x: pos, y: S-CORRIDOR_WIDTH-1, side: 'S' };
       }
       if (dir === 'W') {
-        for (let i=0; i<2; i++) {
-          grid[pos][i] = CORR;
-          grid[pos+1][i] = CORR;
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          for (let j=0; j<CORRIDOR_WIDTH; j++) {
+            grid[pos+i][j] = CORR;
+          }
         }
-        return { x: 2, y: pos, side: 'W' };
+        return { x: CORRIDOR_WIDTH, y: pos, side: 'W' };
       }
       if (dir === 'E') {
-        for (let i=0; i<2; i++) {
-          grid[pos][S-1-i] = CORR;
-          grid[pos+1][S-1-i] = CORR;
+        for (let i=0; i<CORRIDOR_WIDTH; i++) {
+          for (let j=0; j<CORRIDOR_WIDTH; j++) {
+            grid[pos+i][S-1-j] = CORR;
+          }
         }
-        return { x: S-3, y: pos, side: 'E' };
+        return { x: S-CORRIDOR_WIDTH-1, y: pos, side: 'E' };
       }
     }
 
