@@ -60,13 +60,13 @@ class GameMap {
    * Убедиться, что чанк (cx,cy) есть в this.chunks.
    * Если нет — сгенерировать сразу tiles и meta.
    */
-  ensureChunk(cx, cy) {
+  ensureChunk(cx, cy, extraSeed = 0) {
     const key = `${cx},${cy}`;
     if (this.chunks.has(key) || this.generating.has(key)) return;
     this.generating.add(key);
 
     // 1) Генерим саму сетку пола/стен
-    const seed = ((cx * 73856093) ^ (cy * 19349663)) >>> 0;
+    const seed = ((cx * 73856093) ^ (cy * 19349663) ^ extraSeed) >>> 0;
     const rng  = mulberry32(seed);
     const tiles = this._generateChunk(cx, cy, rng);
 
@@ -106,7 +106,7 @@ class GameMap {
    * — генерируем новый (ensureChunk)
    * — заливаем туда сохранённые tile/meta
    */
-  regenerateChunksPreserveFOV(keys, computeFOV, player) {
+  regenerateChunksPreserveFOV(keys, computeFOV, player, extraSeed = 0) {
     // сначала FOV текущей позиции
     const vis = computeFOV(player.x, player.y, player.angle);
 
@@ -138,7 +138,7 @@ class GameMap {
       this.chunks.delete(key);
 
       // 3) генерим снова
-      this.ensureChunk(cx, cy);
+      this.ensureChunk(cx, cy, extraSeed);
 
       // 4) возвращаем сохранённые квадратики
       const fresh = this.chunks.get(key);

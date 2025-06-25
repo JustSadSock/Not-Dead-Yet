@@ -29,3 +29,17 @@ node scripts/testMultiEdgeRegeneration.js
 ```
 
 The script regenerates each neighbouring chunk several times and exits with a non-zero status if any corridor connection disappears.
+
+## Regenerating with a Different Layout
+
+Both `ensureChunk` and `regenerateChunksPreserveFOV` accept an optional
+`extraSeed` parameter. Passing a different value forces the procedural generator
+to build a new layout for the chunk:
+
+```javascript
+const key = '1,0';
+gameMap.regenerateChunksPreserveFOV(new Set([key]), computeFOV, player, Date.now());
+```
+
+Use any integer value for `extraSeed` to trigger a fresh layout when the chunk
+is regenerated.
