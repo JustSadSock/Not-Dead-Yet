@@ -394,9 +394,18 @@ class GameMap {
       let doorNum = Math.max(1, Math.floor((room.w + room.h)/6));
       if(rng()<0.5) doorNum++;
       doorNum = Math.min(4, doorNum);
+      let placed = 0;
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
-        if (d) { doorPoints.push(d); used.add(d.side); }
+        if (d) { doorPoints.push(d); used.add(d.side); placed++; }
+      }
+      // If the room ended up without a door, keep trying with relaxed
+      // constraints (ignore previously used sides) until one is placed
+      let attempts = 0;
+      while (placed === 0 && attempts < 4) {
+        const d = carveDoor(room);
+        if (d) { doorPoints.push(d); placed++; break; }
+        attempts++;
       }
     }
 
