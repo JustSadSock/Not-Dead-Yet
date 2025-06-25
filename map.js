@@ -1,5 +1,16 @@
 // map.js
 
+// небольшая 32-битная PRNG Mulberry32
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function() {
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /**
  * GameMap — чанковая карта с регенерацией забытых тайлов.
  */
@@ -55,7 +66,9 @@ class GameMap {
     this.generating.add(key);
 
     // 1) Генерим саму сетку пола/стен
-    const tiles = this._generateChunk(cx, cy);
+    const seed = ((cx * 73856093) ^ (cy * 19349663)) >>> 0;
+    const rng  = mulberry32(seed);
+    const tiles = this._generateChunk(cx, cy, rng);
 
     // 2) Создаём пустой meta-массив с memoryAlpha=0, visited=false
     const meta = Array.from({ length: this.chunkSize }, () =>
@@ -147,16 +160,16 @@ class GameMap {
    *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
    * Возвращает number[][] размером chunkSize×chunkSize.
    */
-  _generateChunk(cx, cy) {
+  _generateChunk(cx, cy, rng = Math.random) {
     const WALL = 0, CORR = 1, ROOM = 2, DOOR = 3;
     const S = this.chunkSize;
     const grid = Array.from({ length: S }, () => Array(S).fill(WALL));
 
     const rooms = [];
-    const roomCount = 3 + Math.floor(Math.random()*3); // 3-5 комнат
+    const roomCount = 3 + Math.floor(rng()*3); // 3-5 комнат
     const margin = 2;
 
-    function rand(min, max) { return Math.floor(Math.random()*(max-min+1))+min; }
+    function rand(min, max) { return Math.floor(rng()*(max-min+1))+min; }
 
     // попытки расположить комнаты без перекрытия
     for (let r=0; r<roomCount; r++) {
@@ -185,7 +198,7 @@ class GameMap {
     function carveDoor(room, used = new Set()) {
       const sides = ['N','S','W','E'].filter(s => !used.has(s));
       while (sides.length) {
-        const side = sides.splice(Math.floor(Math.random()*sides.length),1)[0];
+        const side = sides.splice(Math.floor(rng()*sides.length),1)[0];
         if (side==='N' && room.y>4) {
           const x = rand(room.x+1, room.x+room.w-3);
           grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
@@ -291,7 +304,7 @@ class GameMap {
         }
         return;
       }
-      if (Math.random()<0.5) {
+      if (rng()<0.5) {
         digHoriz(a.y, a.x, b.x);
         digVert(b.x, a.y, b.y);
       } else {
@@ -303,7 +316,7 @@ class GameMap {
     const doorPoints = [];
     for (let room of rooms) {
       const used = new Set();
-      const doorNum = 2 + Math.floor(Math.random()*2);
+      const doorNum = 2 + Math.floor(rng()*2);
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
         if (d) { doorPoints.push(d); used.add(d.side); }
