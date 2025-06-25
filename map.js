@@ -356,13 +356,7 @@ class GameMap {
     const edges = ['N','S','W','E'];
     const connectors = [];
     for (let dir of edges) {
-      if (edgeRand(dir) < 0.5) continue;
       const pos = 2 + Math.floor(edgeRand(dir, 1) * (S - 6));
-      connectors.push(carveEdge(dir, pos));
-    }
-    if (!connectors.length) {
-      const dir = edges[Math.floor(edgeRand('N', 2) * edges.length)];
-      const pos = 2 + Math.floor(edgeRand(dir, 3) * (S - 6));
       connectors.push(carveEdge(dir, pos));
     }
     doorPoints.push(...connectors);
