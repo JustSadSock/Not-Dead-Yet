@@ -376,4 +376,5 @@ class GameMap {
 }
 
 // делаем доступным в глобальной области, чтобы game.js увидел
-window.GameMap = GameMap;
+if (typeof window !== 'undefined') window.GameMap = GameMap;
+if (typeof module !== 'undefined' && module.exports) module.exports = GameMap;
