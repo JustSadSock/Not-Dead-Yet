@@ -249,7 +249,7 @@ class GameMap {
         else if(p<0.2 && w>5 && h>5){ shape='cross'; }
         const tiles=roomTiles(shape,x,y,w,h,orient);
         if(canPlace(tiles)){
-          rooms.push({x,y,w,h,shape,orient});
+          rooms.push({x,y,w,h,shape,orient,tiles});
           for(const {x:tx,y:ty} of tiles) grid[ty][tx]=ROOM;
           break;
         }
@@ -504,22 +504,38 @@ class GameMap {
       }
     }
 
-    // After placing rooms and carving corridors, surround each room's
-    // bounding box with walls so stray openings are closed off.
-    for(const room of rooms){
-      const startX = room.x - 1;
-      const endX   = room.x + room.w;
-      const startY = room.y - 1;
-      const endY   = room.y + room.h;
-      for(let y=startY; y<=endY; y++){
-        for(let x=startX; x<=endX; x++){
-          if(x<0||y<0||x>=S||y>=S) continue;
-          // Skip tiles inside the room itself
-          if(x>=room.x && x<room.x+room.w &&
-             y>=room.y && y<room.y+room.h) continue;
-          // Leave doors and corridors untouched
-          if(grid[y][x]===DOOR || grid[y][x]===CORR) continue;
-          grid[y][x]=WALL;
+    // Convert any room cell that borders a corridor into a door so
+    // that no corridor touches a room directly without a doorway.
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (grid[y][x] !== ROOM) continue;
+        const card = [[1,0],[-1,0],[0,1],[0,-1]];
+        for (const [dx,dy] of card) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+          if (grid[ny][nx] === CORR) {
+            grid[y][x] = DOOR;
+            break;
+          }
+        }
+      }
+    }
+
+    // After placing rooms and carving corridors, remove any corridor
+    // tiles that touch a room without a door, then surround the room
+    // with walls. This avoids accidental openings along irregular
+    // shapes.
+    for (const room of rooms) {
+      for (const { x, y } of room.tiles) {
+        // Ensure there is a wall around the room tile where nothing else exists
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+            if (grid[ny][nx] === ROOM || grid[ny][nx] === DOOR || grid[ny][nx] === CORR) continue;
+            grid[ny][nx] = WALL;
+          }
         }
       }
     }
