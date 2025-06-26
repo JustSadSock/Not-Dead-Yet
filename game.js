@@ -109,7 +109,8 @@ function loop(now = performance.now()) {
       gameMap.regenerateChunksPreserveFOV(
         toRegen,
         computeFOV,
-        { x: player.x, y: player.y, angle: player.angle }
+        { x: player.x, y: player.y, angle: player.angle },
+        Date.now()
       );
       console.log(">>> После regen, ключи чанков:", Array.from(gameMap.chunks.keys()));
       toRegen.clear();
