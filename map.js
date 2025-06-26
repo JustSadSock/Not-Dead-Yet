@@ -68,7 +68,7 @@ class GameMap {
     // 1) Генерим саму сетку пола/стен
     const seed = ((cx * 73856093) ^ (cy * 19349663) ^ extraSeed) >>> 0;
     const rng  = mulberry32(seed);
-    const tiles = this._generateChunk(cx, cy, rng);
+    const { grid: tiles, rooms } = this._generateChunk(cx, cy, rng);
 
     // 2) Создаём пустой meta-массив с memoryAlpha=0, visited=false
     const meta = Array.from({ length: this.chunkSize }, () =>
@@ -79,7 +79,7 @@ class GameMap {
     );
 
     // 3) Сохраняем
-    this.chunks.set(key, { tiles, meta });
+    this.chunks.set(key, { tiles, meta, rooms });
     this.generating.delete(key);
   }
 
@@ -158,8 +158,8 @@ class GameMap {
    * создаёт набор комнат размером 4-8 тайлов и соединяет их
    * коридорами шириной 2 тайла. Типы клеток:
    *   0 — стена, 1 — коридор, 2 — комната, 3 — дверь.
-   * Возвращает number[][] размером chunkSize×chunkSize.
-   */
+   * Возвращает { grid, rooms } где grid — массив chunkSize×chunkSize.
+  */
   _generateChunk(cx, cy, rng = Math.random) {
     const WALL = 0, CORR = 1, ROOM = 2, DOOR = 3;
     const S = this.chunkSize;
@@ -203,7 +203,7 @@ class GameMap {
         const y = rand(margin, S - h - margin);
         const tiles = roomTiles(x, y, w, h);
         if (canPlace(tiles)) {
-          rooms.push({ x, y, w, h, tiles, id: rooms.length });
+          rooms.push({ x, y, w, h, tiles, id: rooms.length, doorSides: [] });
           for (const { x: tx, y: ty } of tiles) grid[ty][tx] = ROOM;
           break;
         }
@@ -364,14 +364,14 @@ class GameMap {
       let placed = 0;
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
-        if (d) { doorPoints.push(d); used.add(d.side); placed++; }
+        if (d) { doorPoints.push(d); used.add(d.side); room.doorSides.push(d.side); placed++; }
       }
       // If the room ended up without a door, keep trying with relaxed
       // constraints (ignore previously used sides) until one is placed
       let attempts = 0;
       while (placed === 0 && attempts < 4) {
         const d = carveDoor(room);
-        if (d) { doorPoints.push(d); placed++; break; }
+        if (d) { doorPoints.push(d); room.doorSides.push(d.side); placed++; break; }
         attempts++;
       }
     }
@@ -513,7 +513,7 @@ class GameMap {
       }
     }
 
-    return grid;
+    return { grid, rooms };
   }
 }
 
