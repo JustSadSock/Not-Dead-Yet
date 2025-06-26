@@ -249,7 +249,7 @@ class GameMap {
         else if(p<0.2 && w>5 && h>5){ shape='cross'; }
         const tiles=roomTiles(shape,x,y,w,h,orient);
         if(canPlace(tiles)){
-          rooms.push({x,y,w,h,shape,orient,tiles});
+          rooms.push({x,y,w,h,shape,orient,tiles,id:rooms.length});
           for(const {x:tx,y:ty} of tiles) grid[ty][tx]=ROOM;
           break;
         }
@@ -269,7 +269,7 @@ class GameMap {
           grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
           grid[room.y-1][x] = CORR; grid[room.y-1][x+1] = CORR;
           grid[room.y-2][x] = CORR; grid[room.y-2][x+1] = CORR;
-          return {x, y: room.y-3, side};
+          return {x, y: room.y-3, side, roomId: room.id};
         }
         if (side==='S' && room.y+room.h < S-4) {
           const x = rand(room.x+1, room.x+room.w-3);
@@ -280,7 +280,7 @@ class GameMap {
           grid[y0][x] = DOOR; grid[y0][x+1] = DOOR;
           grid[y0+1][x] = CORR; grid[y0+1][x+1] = CORR;
           grid[y0+2][x] = CORR; grid[y0+2][x+1] = CORR;
-          return {x, y: y0+3, side};
+          return {x, y: y0+3, side, roomId: room.id};
         }
         if (side==='W' && room.x>4) {
           const y = rand(room.y+1, room.y+room.h-3);
@@ -290,7 +290,7 @@ class GameMap {
           grid[y][room.x] = DOOR; grid[y+1][room.x] = DOOR;
           grid[y][room.x-1] = CORR; grid[y+1][room.x-1] = CORR;
           grid[y][room.x-2] = CORR; grid[y+1][room.x-2] = CORR;
-          return {x: room.x-3, y, side};
+          return {x: room.x-3, y, side, roomId: room.id};
         }
         if (side==='E' && room.x+room.w < S-4) {
           const y = rand(room.y+1, room.y+room.h-3);
@@ -301,7 +301,7 @@ class GameMap {
           grid[y][x0] = DOOR; grid[y+1][x0] = DOOR;
           grid[y][x0+1] = CORR; grid[y+1][x0+1] = CORR;
           grid[y][x0+2] = CORR; grid[y+1][x0+2] = CORR;
-          return {x: x0+3, y, side};
+          return {x: x0+3, y, side, roomId: room.id};
         }
       }
       return null;
@@ -474,33 +474,50 @@ class GameMap {
     }
     doorPoints.push(...connectors);
 
-    function mst(points){
-      const n=points.length;
-      const visited=new Set([0]);
-      const edges=[];
-      while(visited.size<n){
-        let best=null,bi,bj;
-        for(let i of visited){
-          for(let j=0;j<n;j++) if(!visited.has(j)){
-            const dx=points[i].x-points[j].x;
-            const dy=points[i].y-points[j].y;
-            const d=dx*dx+dy*dy;
-            if(best===null||d<best){best=d;bi=i;bj=j;}
+    function mst(points, maxDistSq = Infinity) {
+      const n = points.length;
+      const visited = new Set([0]);
+      const edges = [];
+      while (visited.size < n) {
+        let best = null, bi = -1, bj = -1;
+        for (let i of visited) {
+          for (let j = 0; j < n; j++) if (!visited.has(j)) {
+            const dx = points[i].x - points[j].x;
+            const dy = points[i].y - points[j].y;
+            const d2 = dx*dx + dy*dy;
+            if (d2 > maxDistSq) continue;
+            if (best === null || d2 < best) { best = d2; bi = i; bj = j; }
+          }
+        }
+        if (best === null) { // nothing within threshold, ignore it
+          for (let i of visited) {
+            for (let j = 0; j < n; j++) if (!visited.has(j)) {
+              const dx = points[i].x - points[j].x;
+              const dy = points[i].y - points[j].y;
+              const d2 = dx*dx + dy*dy;
+              if (best === null || d2 < best) { best = d2; bi = i; bj = j; }
+            }
           }
         }
         visited.add(bj);
-        edges.push([bi,bj]);
+        edges.push([bi, bj]);
       }
       return edges;
     }
 
-    const connections=mst(doorPoints);
+    const MAX_DIST = (S/2) * (S/2);
+    const connections = mst(doorPoints, MAX_DIST);
     for(const [a,b] of connections){
+      if(doorPoints[a].roomId===doorPoints[b].roomId) continue;
       digCorridor(doorPoints[a],doorPoints[b]);
     }
     for(let i=0;i<doorPoints.length;i++){
       for(let j=i+1;j<doorPoints.length;j++){
-        if(rng()<0.15) digCorridor(doorPoints[i],doorPoints[j]);
+        const dx=doorPoints[i].x-doorPoints[j].x;
+        const dy=doorPoints[i].y-doorPoints[j].y;
+        if(dx*dx+dy*dy>MAX_DIST) continue;
+        if(doorPoints[i].roomId===doorPoints[j].roomId) continue;
+        if(rng()<0.10) digCorridor(doorPoints[i],doorPoints[j]);
       }
     }
 
