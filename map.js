@@ -172,53 +172,11 @@ class GameMap {
 
     function rand(min, max) { return Math.floor(rng()*(max-min+1))+min; }
 
-    function roomTiles(shape,x,y,w,h,orient=0){
-      const tiles=[];
-      if(shape==='rect'){
-        for(let yy=y;yy<y+h;yy++)
-          for(let xx=x;xx<x+w;xx++)
-            tiles.push({x:xx,y:yy});
-      }else if(shape==='L'){
-        const hw=Math.floor(w/2), hh=Math.floor(h/2);
-        if(orient===0){ // missing TL
-          for(let yy=y;yy<y+h;yy++)
-            for(let xx=x+hw;xx<x+w;xx++)
-              tiles.push({x:xx,y:yy});
-          for(let yy=y+hh;yy<y+h;yy++)
-            for(let xx=x;xx<x+hw;xx++)
-              tiles.push({x:xx,y:yy});
-        }else if(orient===1){ // missing TR
-          for(let yy=y;yy<y+h;yy++)
-            for(let xx=x;xx<x+hw;xx++)
-              tiles.push({x:xx,y:yy});
-          for(let yy=y+hh;yy<y+h;yy++)
-            for(let xx=x+hw;xx<x+w;xx++)
-              tiles.push({x:xx,y:yy});
-        }else if(orient===2){ // missing BR
-          for(let yy=y;yy<y+hh;yy++)
-            for(let xx=x;xx<x+w;xx++)
-              tiles.push({x:xx,y:yy});
-          for(let yy=y+hh;yy<y+h;yy++)
-            for(let xx=x;xx<x+hw;xx++)
-              tiles.push({x:xx,y:yy});
-        }else{ // missing BL
-          for(let yy=y;yy<y+hh;yy++)
-            for(let xx=x;xx<x+w;xx++)
-              tiles.push({x:xx,y:yy});
-          for(let yy=y+hh;yy<y+h;yy++)
-            for(let xx=x+hw;xx<x+w;xx++)
-              tiles.push({x:xx,y:yy});
-        }
-      }else if(shape==='cross'){
-        const hw=Math.floor(w/3), hh=Math.floor(h/3);
-        const cx=x+Math.floor(w/2), cy=y+Math.floor(h/2);
-        for(let yy=y;yy<y+h;yy++)
-          for(let xx=cx-hw;xx<=cx+hw;xx++)
-            tiles.push({x:xx,y:yy});
-        for(let yy=cy-hh;yy<=cy+hh;yy++)
-          for(let xx=x;xx<x+w;xx++)
-            tiles.push({x:xx,y:yy});
-      }
+    function roomTiles(x, y, w, h) {
+      const tiles = [];
+      for (let yy = y; yy < y + h; yy++)
+        for (let xx = x; xx < x + w; xx++)
+          tiles.push({ x: xx, y: yy });
       return tiles;
     }
 
@@ -235,22 +193,17 @@ class GameMap {
       return true;
     }
 
-    // попытки расположить комнаты без перекрытия и с разными формами
-    for (let r=0; r<roomCount; r++) {
-      for (let t=0; t<20; t++) {
-        const w = rand(4,8);
-        const h = rand(4,8);
+    // попытки расположить комнаты без перекрытия
+    for (let r = 0; r < roomCount; r++) {
+      for (let t = 0; t < 20; t++) {
+        const w = rand(4, 8);
+        const h = rand(4, 8);
         const x = rand(margin, S - w - margin);
         const y = rand(margin, S - h - margin);
-        let shape='rect';
-        let orient=0;
-        const p=rng();
-        if(p<0.15 && w>4 && h>4){ shape='L'; orient=Math.floor(rng()*4); }
-        else if(p<0.2 && w>5 && h>5){ shape='cross'; }
-        const tiles=roomTiles(shape,x,y,w,h,orient);
-        if(canPlace(tiles)){
-          rooms.push({x,y,w,h,shape,orient,tiles,id:rooms.length});
-          for(const {x:tx,y:ty} of tiles) grid[ty][tx]=ROOM;
+        const tiles = roomTiles(x, y, w, h);
+        if (canPlace(tiles)) {
+          rooms.push({ x, y, w, h, tiles, id: rooms.length });
+          for (const { x: tx, y: ty } of tiles) grid[ty][tx] = ROOM;
           break;
         }
       }
@@ -540,8 +493,7 @@ class GameMap {
 
     // After placing rooms and carving corridors, remove any corridor
     // tiles that touch a room without a door, then surround the room
-    // with walls. This avoids accidental openings along irregular
-    // shapes.
+    // with walls. This avoids accidental openings.
     for (const room of rooms) {
       for (const { x, y } of room.tiles) {
         // Ensure there is a wall around the room tile where nothing else exists
