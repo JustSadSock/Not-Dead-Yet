@@ -164,6 +164,7 @@ class GameMap {
     const WALL = 0, CORR = 1, ROOM = 2, DOOR = 3;
     const S = this.chunkSize;
     const CORRIDOR_WIDTH = 2;
+    const MAX_CORRIDOR_LEN = 20;
     const grid = Array.from({ length: S }, () => Array(S).fill(WALL));
 
     const rooms = [];
@@ -335,6 +336,7 @@ class GameMap {
    function digCorridor(a,b) {
      const path=aStarPath(a,b);
      if(path){
+        if(path.length-1>MAX_CORRIDOR_LEN) return;
         for(const p of path){
           for(let dy=0; dy<CORRIDOR_WIDTH; dy++)
             for(let dx=0; dx<CORRIDOR_WIDTH; dx++)
@@ -342,6 +344,8 @@ class GameMap {
         }
         return;
       }
+      const straightDist=Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+      if(straightDist>MAX_CORRIDOR_LEN) return;
       if (rng()<0.5) {
         digHoriz(a.y, a.x, b.x);
         digVert(b.x, a.y, b.y);
