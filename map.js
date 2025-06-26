@@ -478,26 +478,90 @@ class GameMap {
       }
     }
 
-    // Convert any room cell that borders a corridor into a door so
-    // that no corridor touches a room directly without a doorway.
+    // Remove any corridor tile that touches a room without a door next to it.
+    // This keeps rooms properly enclosed while allowing only the doors placed
+    // by carveDoor() to remain.
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
-        if (grid[y][x] !== ROOM) continue;
+        if (grid[y][x] !== CORR) continue;
         const card = [[1,0],[-1,0],[0,1],[0,-1]];
         for (const [dx,dy] of card) {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
-          if (grid[ny][nx] === CORR) {
-            grid[y][x] = DOOR;
-            break;
-          }
+          if (grid[ny][nx] === ROOM) { grid[y][x] = WALL; break; }
         }
       }
     }
 
-    // After placing rooms and carving corridors, remove any corridor
-    // tiles that touch a room without a door, then surround the room
-    // with walls. This avoids accidental openings.
+    // Clean up any corridor segments that became disconnected from doors or
+    // the chunk edges after the pruning above.
+    const reachable = Array.from({ length: S }, () => Array(S).fill(false));
+    const queue = [];
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (grid[y][x] === DOOR ||
+            (grid[y][x] === CORR && (x === 0 || y === 0 || x === S-1 || y === S-1))) {
+          reachable[y][x] = true;
+          queue.push([x, y]);
+        }
+      }
+    }
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    while (queue.length) {
+      const [cx, cy] = queue.shift();
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+        if (reachable[ny][nx]) continue;
+        if (grid[ny][nx] !== CORR && grid[ny][nx] !== DOOR) continue;
+        reachable[ny][nx] = true;
+        queue.push([nx, ny]);
+      }
+    }
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if ((grid[y][x] === CORR || grid[y][x] === DOOR) && !reachable[y][x]) {
+          grid[y][x] = WALL;
+        }
+      }
+    }
+
+    // Enforce the maximum corridor length by measuring distance from doors and
+    // chunk edges, trimming any tiles that lie beyond the limit.
+    const dist = Array.from({ length: S }, () => Array(S).fill(Infinity));
+    const q2 = [];
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (grid[y][x] === DOOR ||
+            (grid[y][x] === CORR && (x === 0 || y === 0 || x === S-1 || y === S-1))) {
+          dist[y][x] = 0;
+          q2.push([x, y]);
+        }
+      }
+    }
+    while (q2.length) {
+      const [cx, cy] = q2.shift();
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= S || ny >= S) continue;
+        if (grid[ny][nx] !== CORR && grid[ny][nx] !== DOOR) continue;
+        const nd = dist[cy][cx] + 1;
+        if (nd < dist[ny][nx]) {
+          dist[ny][nx] = nd;
+          q2.push([nx, ny]);
+        }
+      }
+    }
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (grid[y][x] === CORR && dist[y][x] > MAX_CORRIDOR_LEN) {
+          grid[y][x] = WALL;
+        }
+      }
+    }
+
+    // Surround every room with walls so corridors don't create accidental
+    // openings where no door exists.
     for (const room of rooms) {
       for (const { x, y } of room.tiles) {
         // Ensure there is a wall around the room tile where nothing else exists
