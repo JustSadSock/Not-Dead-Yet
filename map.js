@@ -355,8 +355,8 @@ class GameMap {
     for (let room of rooms) {
       const used = new Set();
       let doorNum = Math.max(1, Math.floor((room.w + room.h)/6));
-      if(rng()<0.5) doorNum++;
-      doorNum = Math.min(4, doorNum);
+      if (rng() < 0.5) doorNum++;
+      doorNum = Math.min(3, doorNum); // doors on 1-3 sides only
       let placed = 0;
       for (let i=0; i<doorNum; i++) {
         const d = carveDoor(room, used);
