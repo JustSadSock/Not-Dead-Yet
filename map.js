@@ -219,43 +219,47 @@ class GameMap {
           const x = rand(room.x+1, room.x+room.w-3);
           if(grid[room.y][x]!==ROOM||grid[room.y][x+1]!==ROOM) continue;
           if(grid[room.y-1][x]!==WALL||grid[room.y-1][x+1]!==WALL||
-             grid[room.y-2][x]!==WALL||grid[room.y-2][x+1]!==WALL) continue;
-          grid[room.y][x] = DOOR; grid[room.y][x+1] = DOOR;
-          grid[room.y-1][x] = CORR; grid[room.y-1][x+1] = CORR;
+             grid[room.y-2][x]!==WALL||grid[room.y-2][x+1]!==WALL||
+             grid[room.y-3][x]!==WALL||grid[room.y-3][x+1]!==WALL) continue;
+          grid[room.y-1][x] = DOOR; grid[room.y-1][x+1] = DOOR;
           grid[room.y-2][x] = CORR; grid[room.y-2][x+1] = CORR;
-          return {x, y: room.y-3, side, roomId: room.id};
+          grid[room.y-3][x] = CORR; grid[room.y-3][x+1] = CORR;
+          return {x, y: room.y-4, side, roomId: room.id};
         }
         if (side==='S' && room.y+room.h < S-4) {
           const x = rand(room.x+1, room.x+room.w-3);
           const y0 = room.y+room.h-1;
           if(grid[y0][x]!==ROOM||grid[y0][x+1]!==ROOM) continue;
           if(grid[y0+1][x]!==WALL||grid[y0+1][x+1]!==WALL||
-             grid[y0+2][x]!==WALL||grid[y0+2][x+1]!==WALL) continue;
-          grid[y0][x] = DOOR; grid[y0][x+1] = DOOR;
-          grid[y0+1][x] = CORR; grid[y0+1][x+1] = CORR;
+             grid[y0+2][x]!==WALL||grid[y0+2][x+1]!==WALL||
+             grid[y0+3][x]!==WALL||grid[y0+3][x+1]!==WALL) continue;
+          grid[y0+1][x] = DOOR; grid[y0+1][x+1] = DOOR;
           grid[y0+2][x] = CORR; grid[y0+2][x+1] = CORR;
-          return {x, y: y0+3, side, roomId: room.id};
+          grid[y0+3][x] = CORR; grid[y0+3][x+1] = CORR;
+          return {x, y: y0+4, side, roomId: room.id};
         }
         if (side==='W' && room.x>4) {
           const y = rand(room.y+1, room.y+room.h-3);
           if(grid[y][room.x]!==ROOM||grid[y+1][room.x]!==ROOM) continue;
           if(grid[y][room.x-1]!==WALL||grid[y+1][room.x-1]!==WALL||
-             grid[y][room.x-2]!==WALL||grid[y+1][room.x-2]!==WALL) continue;
-          grid[y][room.x] = DOOR; grid[y+1][room.x] = DOOR;
-          grid[y][room.x-1] = CORR; grid[y+1][room.x-1] = CORR;
+             grid[y][room.x-2]!==WALL||grid[y+1][room.x-2]!==WALL||
+             grid[y][room.x-3]!==WALL||grid[y+1][room.x-3]!==WALL) continue;
+          grid[y][room.x-1] = DOOR; grid[y+1][room.x-1] = DOOR;
           grid[y][room.x-2] = CORR; grid[y+1][room.x-2] = CORR;
-          return {x: room.x-3, y, side, roomId: room.id};
+          grid[y][room.x-3] = CORR; grid[y+1][room.x-3] = CORR;
+          return {x: room.x-4, y, side, roomId: room.id};
         }
         if (side==='E' && room.x+room.w < S-4) {
           const y = rand(room.y+1, room.y+room.h-3);
           const x0 = room.x+room.w-1;
           if(grid[y][x0]!==ROOM||grid[y+1][x0]!==ROOM) continue;
           if(grid[y][x0+1]!==WALL||grid[y+1][x0+1]!==WALL||
-             grid[y][x0+2]!==WALL||grid[y+1][x0+2]!==WALL) continue;
-          grid[y][x0] = DOOR; grid[y+1][x0] = DOOR;
-          grid[y][x0+1] = CORR; grid[y+1][x0+1] = CORR;
+             grid[y][x0+2]!==WALL||grid[y+1][x0+2]!==WALL||
+             grid[y][x0+3]!==WALL||grid[y+1][x0+3]!==WALL) continue;
+          grid[y][x0+1] = DOOR; grid[y+1][x0+1] = DOOR;
           grid[y][x0+2] = CORR; grid[y+1][x0+2] = CORR;
-          return {x: x0+3, y, side, roomId: room.id};
+          grid[y][x0+3] = CORR; grid[y+1][x0+3] = CORR;
+          return {x: x0+4, y, side, roomId: room.id};
         }
       }
       return null;
