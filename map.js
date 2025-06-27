@@ -482,6 +482,59 @@ class GameMap {
       }
     }
 
+    // Ensure at least three doors share a connected corridor network
+    function connectedDoors(idx){
+      const visitedCells=new Set();
+      const queue=[doorPoints[idx]];
+      const comp=[idx];
+      visitedCells.add(`${doorPoints[idx].x},${doorPoints[idx].y}`);
+      const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+      while(queue.length){
+        const {x,y}=queue.shift();
+        for(let i=0;i<doorPoints.length;i++){
+          if(comp.includes(i)) continue;
+          if(doorPoints[i].x===x && doorPoints[i].y===y){
+            comp.push(i);
+          }
+        }
+        for(const [dx,dy] of dirs){
+          const nx=x+dx, ny=y+dy;
+          if(nx<0||ny<0||nx>=S||ny>=S) continue;
+          if(grid[ny][nx]!==CORR && grid[ny][nx]!==DOOR) continue;
+          const key=`${nx},${ny}`;
+          if(visitedCells.has(key)) continue;
+          visitedCells.add(key);
+          queue.push({x:nx,y:ny});
+        }
+      }
+      return comp;
+    }
+
+    const comps=[];
+    const assigned=new Set();
+    for(let i=0;i<doorPoints.length;i++){
+      if(assigned.has(i)) continue;
+      const c=connectedDoors(i);
+      for(const id of c) assigned.add(id);
+      comps.push(c);
+    }
+    let largest=comps.reduce((a,b)=>a.length>=b.length?a:b,[]);
+    if(largest.length<3 && largest.length<doorPoints.length){
+      let bestDist=Infinity,ai=-1,bi=-1;
+      for(const a of largest){
+        for(let j=0;j<doorPoints.length;j++){
+          if(largest.includes(j)) continue;
+          const dx=doorPoints[a].x-doorPoints[j].x;
+          const dy=doorPoints[a].y-doorPoints[j].y;
+          const d2=dx*dx+dy*dy;
+          if(d2<bestDist){bestDist=d2;ai=a;bi=j;}
+        }
+      }
+      if(ai!==-1 && bi!==-1){
+        digCorridor(doorPoints[ai],doorPoints[bi]);
+      }
+    }
+
     // Remove any corridor tile that touches a room without a door next to it.
     // This keeps rooms properly enclosed while allowing only the doors placed
     // by carveDoor() to remain.
